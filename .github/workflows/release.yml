@@ -144,6 +144,11 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # dpkg-buildpackage only looks for ./debian, but the packaging lives in
+      # packaging/debian next to the Arch PKGBUILD. Stage a copy for the build.
+      - name: Stage the Debian packaging
+        run: cp -a packaging/debian debian
+
       - name: Set the changelog version
         run: |
           set -eu

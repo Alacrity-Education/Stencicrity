@@ -13,8 +13,10 @@ stencil-out/
 *.deb
 pkg/
 src/
-debian/.debhelper/
-debian/files
-debian/*.substvars
-debian/stencicrity/
-debian/debhelper-build-stamp
+# ./debian is a build-time copy of packaging/debian (see release.yml)
+debian/
+packaging/debian/.debhelper/
+packaging/debian/files
+packaging/debian/*.substvars
+packaging/debian/stencicrity/
+packaging/debian/debhelper-build-stamp
