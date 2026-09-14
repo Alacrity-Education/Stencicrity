@@ -7,7 +7,7 @@ openings from the stencil (state ``ignore``).  Pads without paste
 ("candidates") are offered to the user, who marks them ``open`` (cut an
 opening) or ``ignore``.  Candidates whose reference starts with one of the
 configured ignore prefixes plus a digit (``TP3``, ``NT12``) default to
-``ignore``.  The decisions themselves are stored in the project's ``.stencil``
+``ignore``.  The decisions themselves are stored in the project's ``.stencicrity``
 file (see :mod:`pcbstencil.config`).
 """
 from __future__ import annotations
@@ -91,7 +91,7 @@ def default_state(pad: Pad,
 # Detection
 # --------------------------------------------------------------------------- #
 def pad_key(project: str, side: str, ref: str, pin: str, x: float, y: float) -> str:
-    """Stable identifier of a pad, used in the .stencil file (board coords)."""
+    """Stable identifier of a pad, used in the .stencicrity file (board coords)."""
     return f"{project}/{side}/{ref}.{pin}@{x:.3f},{y:.3f}"
 
 

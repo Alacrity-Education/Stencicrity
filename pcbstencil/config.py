@@ -1,4 +1,4 @@
-"""The ``.stencil`` file: the whole project configuration in one text file.
+"""The ``.stencicrity`` file: the whole project configuration in one text file.
 
 It stores the stencil sheet (size and orientation), the layout parameters, the
 rules that give fresh pads their default state, the on/off switch of every
@@ -58,7 +58,14 @@ from .model import (
 from .pads import default_state, natural_key
 
 __all__ = ["load_config", "apply_config", "collect_config", "save_config",
-           "format_config", "parse_bool", "parse_prefixes"]
+           "format_config", "parse_bool", "parse_prefixes",
+           "CONFIG_FILENAME", "LEGACY_CONFIG_SUFFIX"]
+
+#: Name of the configuration file; a hidden file next to the gerbers.
+CONFIG_FILENAME = ".stencicrity"
+#: Suffix of the pre-0.1.2 configuration file (``<name>.stencil``), migrated
+#: to :data:`CONFIG_FILENAME` on the first run that finds one.
+LEGACY_CONFIG_SUFFIX = ".stencil"
 
 SECTION_STENCIL = "stencil"
 SECTION_LAYOUT = "layout"
@@ -355,7 +362,7 @@ def _ordered_projects(projects: list[Project]) -> list[Project]:
 
 
 def format_config(config: Config, projects: list[Project]) -> str:
-    """Render the whole ``.stencil`` file text."""
+    """Render the whole ``.stencicrity`` file text."""
     stamp = datetime.now().isoformat(timespec="seconds")
     params = config.layout
     lines: list[str] = [
@@ -464,7 +471,7 @@ def _atomic_write(path: str, text: str) -> None:
     """Write *text* to *path* through a temporary file in the same directory."""
     directory = os.path.dirname(os.path.abspath(path)) or "."
     os.makedirs(directory, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".stencil-", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".stencicrity-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)

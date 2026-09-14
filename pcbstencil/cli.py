@@ -4,14 +4,14 @@ Run it from the folder that holds the KiCad gerber zips::
 
     python3 stencicrity.py
 
-It discovers the projects, loads ``./<name>.stencil`` (the project's
+It discovers the projects, loads ``./.stencicrity`` (the project's
 configuration: stencil size, layout, the rules that give fresh pads their
 default state, which sides to place, what to do with copper pads without paste
 and which paste openings to close), applies the options given on the command
 line, shows a preview and a curses TUI, saves the configuration again and writes the
 ``F_Paste`` / ``F_Cu`` gerbers, a preview PNG, a report and a zip.
 
-Precedence: an explicitly given command line option wins over the ``.stencil``
+Precedence: an explicitly given command line option wins over the ``.stencicrity``
 file, which wins over the built-in default.  Options that can come from the
 file default to ``None`` ("not given") instead of a value.
 """
@@ -24,6 +24,7 @@ import zipfile
 from typing import Optional, Sequence
 
 from . import __version__
+from .config import CONFIG_FILENAME, LEGACY_CONFIG_SUFFIX
 from .gerber import GerberError, polygons_of
 from .model import (
     ORIENTATION_LANDSCAPE,
@@ -57,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="stencicrity",
         description="Merge KiCad paste gerbers of several projects into one "
                     "stencil order.",
-        epilog="Options marked 'from the .stencil file' keep the value stored "
+        epilog="Options marked 'from the .stencicrity file' keep the value stored "
                "in the configuration file when they are not given; when they "
                "are given they override it and are saved back.",
     )
@@ -71,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="base name of the generated files (default: %(default)s)")
     parser.add_argument("--config", default=None, metavar="FILE",
                         help="configuration and pad decision file "
-                             "(default: ./<NAME>.stencil)")
+                             f"(default: ./{CONFIG_FILENAME})")
     # Old name of --config, kept working but no longer advertised.
     parser.add_argument("--overrides", dest="config", default=None,
                         metavar="FILE", help=argparse.SUPPRESS)
@@ -79,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     group = parser.add_argument_group("stencil sheet")
     group.add_argument("--size", default=None,
                        choices=[size_label(s) for s in STENCIL_SIZES],
-                       help="stencil sheet size in mm (from the .stencil file, "
+                       help="stencil sheet size in mm (from the .stencicrity file, "
                             "else 380x280)")
     orientation = group.add_mutually_exclusive_group()
     orientation.add_argument("--landscape", dest="orientation",
@@ -89,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
                              action="store_const", const=ORIENTATION_PORTRAIT,
                              help="long side vertical")
 
-    group = parser.add_argument_group("layout (mm; from the .stencil file)")
+    group = parser.add_argument_group("layout (mm; from the .stencicrity file)")
     group.add_argument("--gap", type=float, default=None, metavar="MM",
                        help="spacing between neighbouring boards; the dotted "
                             "border runs in the middle of it (default 30)")
@@ -143,18 +144,18 @@ def build_parser() -> argparse.ArgumentParser:
                        help="reference prefix whose pads without paste default "
                             "to 'ignore' (prefix + digit, e.g. TP3); "
                             "repeatable, replaces the stored list and is saved "
-                            "to the .stencil file; pass an empty string to "
+                            "to the .stencicrity file; pass an empty string to "
                             "clear it (from the file, else NT TP)")
 
     group = parser.add_argument_group("selection")
     group.add_argument("--exclude", action="append", default=[],
                        metavar="PROJECT[:top|bottom]",
                        help="switch a project (or one of its sides) off; "
-                            "repeatable, saved to the .stencil file")
+                            "repeatable, saved to the .stencicrity file")
     group.add_argument("--only", action="append", default=[],
                        metavar="PROJECT[:top|bottom]",
                        help="switch everything else off; repeatable, saved to "
-                            "the .stencil file")
+                            "the .stencicrity file")
 
     group = parser.add_argument_group("output")
     group.add_argument("--px-per-mm", type=float, default=20.0,
@@ -404,7 +405,14 @@ def _run(args: argparse.Namespace) -> int:
     cwd = os.getcwd()
     out_dir = os.path.abspath(args.out)
     name = args.name
-    config_path = args.config or os.path.join(cwd, f"{name}.stencil")
+    config_path = args.config or os.path.join(cwd, CONFIG_FILENAME)
+    # Pre-0.1.1 runs stored the configuration in ./<name>.stencil; read it once
+    # more and write it to the new place (the old file is left alone).
+    legacy_path = None
+    if args.config is None and not os.path.exists(config_path):
+        candidate = os.path.join(cwd, f"{name}{LEGACY_CONFIG_SUFFIX}")
+        if os.path.isfile(candidate):
+            legacy_path = candidate
 
     def warn(message: str) -> None:
         """Print a warning to stderr, keeping it in order with stdout."""
@@ -425,8 +433,11 @@ def _run(args: argparse.Namespace) -> int:
     # 2. configuration ------------------------------------------------------ #
     # The [rules] section decides the default state of a pad nobody decided on
     # yet, so the configuration has to be read before the pads are detected.
-    existed = os.path.exists(config_path)
-    config = load_config(config_path, warn=warn)
+    source_path = legacy_path or config_path
+    existed = os.path.exists(source_path)
+    config = load_config(source_path, warn=warn)
+    if legacy_path:
+        print(f"note: migrated {legacy_path} to {CONFIG_FILENAME}")
     apply_cli_config(config, args)
     for project in projects:
         for side in project.sides():

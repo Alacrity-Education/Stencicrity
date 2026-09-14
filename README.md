@@ -39,9 +39,9 @@ stencicrity.py` works as well.
    with a `GERBER-` prefix stripped. Top and bottom each become one *side*.
    The board size comes from `Edge_Cuts`, else from the bounding box of the
    copper and paste layers. Our own output is never read back as input.
-2. Configuration. `./stencil.stencil` is read if it exists, the command line
-   options override it, the pads are detected, and the file is written back
-   straight away so it exists even if the run is interrupted.
+2. Configuration. The hidden `./.stencicrity` file is read if it exists, the
+   command line options override it, the pads are detected, and the file is
+   written back straight away so it exists even if the run is interrupted.
 3. Preview. The sheet is laid out and rendered to
    `stencil-out/stencil-preview.png`, which opens in the desktop viewer.
 4. The TUI. Four pages: Pads, Sides, Stencil, Layout. Every change re-packs
@@ -126,13 +126,16 @@ The Pads page lists the pasted pads on `*`; setting one to `ignore` drops the
 paste openings that cover it from the stencil. We use that for a connector or
 a shield that is soldered by hand on an otherwise finished board.
 
-### The `.stencil` file
+### The `.stencicrity` file
 
-Everything a run needs is in `./stencil.stencil` (`--name` changes the stem,
-`--config FILE` the path). It is written as soon as the projects are known and
-again when the TUI exits, so it always reflects the last run, and it is meant
-to be edited by hand. Options given on the command line override the file and
-are saved back into it.
+Everything a run needs is in `./.stencicrity`, a hidden file in the folder with
+the gerbers. The name is fixed - `--name` does not change it, only
+`--config FILE` points somewhere else. It is written as soon as the projects
+are known and again when the TUI exits, so it always reflects the last run, and
+it is meant to be edited by hand. Options given on the command line override
+the file and are saved back into it. A `stencil.stencil` left over from an
+earlier version is loaded once, reported with a `note: migrated ...` line and
+written to `.stencicrity`; the old file stays where it is.
 
 ```ini
 [stencil]
@@ -249,10 +252,11 @@ under every dotted line, a label in every cell and a legend underneath:
 `stencicrity --help` lists everything. The ones we reach for:
 
 - `inputs...` - zip files or gerber directories instead of scanning the folder.
-- `--name NAME`, `--out DIR`, `--config FILE` - names and places.
+- `--name NAME`, `--out DIR` - name and place of the generated files;
+  `--config FILE` - the configuration file (default `./.stencicrity`).
 - `--size WxH`, `--portrait`, `--gap MM`, `--no-holes`, `--hole-grid MM`,
   `--dot-line-gap MM`, `--sort name` and the other layout numbers; all of them
-  are saved into the `.stencil` file.
+  are saved into the `.stencicrity` file.
 - `--only PROJECT[:top|bottom]`, `--exclude PROJECT[:top|bottom]` - switch
   sides on or off; repeatable, case insensitive, a substring is enough
   (`--exclude photo` drops `GERBER-PhotoAmp`); saved as well.
@@ -348,7 +352,7 @@ has the newer Shapely in backports; use `pip` or `uv` there.
   relies on X2 `FileFunction` headers or KiCad style file names. Gerbers from
   other tools may not be recognised.
 - Pads without a `%TO.P` attribute get the reference `?` and a running pin
-  number; their keys in the `.stencil` file are less stable.
+  number; their keys in the `.stencicrity` file are less stable.
 - No Windows support yet, possibly never. This is due to hard dependency on ncurses. 
 
 ## License

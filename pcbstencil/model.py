@@ -249,7 +249,7 @@ class LayoutParams:
 
 @dataclass
 class Config:
-    """The whole .stencil file: stencil size, layout, enabled sides, pad states."""
+    """The whole .stencicrity file: stencil size, layout, enabled sides, pad states."""
     size: tuple[int, int] = DEFAULT_STENCIL_SIZE     # long side first, one of STENCIL_SIZES
     orientation: str = ORIENTATION_LANDSCAPE
     layout: LayoutParams = field(default_factory=LayoutParams)
