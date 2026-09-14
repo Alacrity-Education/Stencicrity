@@ -406,7 +406,7 @@ def _run(args: argparse.Namespace) -> int:
     out_dir = os.path.abspath(args.out)
     name = args.name
     config_path = args.config or os.path.join(cwd, CONFIG_FILENAME)
-    # Pre-0.1.1 runs stored the configuration in ./<name>.stencil; read it once
+    # Pre-0.1.2 runs stored the configuration in ./<name>.stencil; read it once
     # more and write it to the new place (the old file is left alone).
     legacy_path = None
     if args.config is None and not os.path.exists(config_path):
