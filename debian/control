@@ -1,0 +1,37 @@
+Source: stencicrity
+Section: electronics
+Priority: optional
+Maintainer: lucaci32u4 <lucaci32u4@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               python3-all,
+               python3-setuptools,
+               pybuild-plugin-pyproject
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/Alacrity-Education/Stencicrity
+
+Package: stencicrity
+Architecture: all
+Depends: ${python3:Depends},
+         ${misc:Depends},
+         python3-shapely (>= 2),
+         python3-pil,
+         python3-numpy
+Recommends: xdg-utils
+Description: merge KiCad solder-paste gerbers into one stencil order
+ Stencicrity takes the gerber exports of several KiCad projects and lays every
+ board side out on a single stencil sheet, so that a batch of small boards can
+ be ordered as one stencil instead of one stencil per project.
+ .
+ It copies all paste openings over, marks the border of every board with
+ dotted lines so the sheet can be cut apart afterwards, and places dowel-pin
+ holes on a fixed grid so that every cut-out piece fits the same fixture
+ plate. The result is a single F_Paste gerber, packed in a zip together with a
+ copper reference layer, that a stencil house cuts like any other.
+ .
+ Copper pads that have no paste opening in the source - test points, jumper
+ pads, connectors soldered by hand - are collected and presented in a curses
+ terminal interface, where each of them is either opened or left closed. The
+ decisions are stored in a plain text file next to the gerbers, so a second
+ run over the same boards needs no interaction.
