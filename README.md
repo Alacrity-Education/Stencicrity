@@ -295,6 +295,18 @@ Every release on GitHub carries two packages, both architecture independent:
 | `stencicrity-<version>-1-any.pkg.tar.zst` | Arch Linux and derivatives |
 | `stencicrity_<version>-1_all.deb` | Debian and Ubuntu |
 
+To fetch the latest release and install it in one go, on Arch:
+
+    curl -fsSL -o /tmp/stencicrity.pkg.tar.zst "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*\.pkg\.tar\.zst' | head -1)" && sudo pacman -U /tmp/stencicrity.pkg.tar.zst
+
+on Debian and Ubuntu:
+
+    curl -fsSL -o /tmp/stencicrity.deb "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*_all\.deb' | head -1)" && sudo apt install /tmp/stencicrity.deb
+
+The first `curl` asks the GitHub API for the latest release and picks the
+package URL out of it; the second downloads the file to `/tmp`. Run it again
+to update.
+
 On Arch:
 
     sudo pacman -U stencicrity-0.1.0-1-any.pkg.tar.zst
