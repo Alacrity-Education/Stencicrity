@@ -349,6 +349,7 @@ has the newer Shapely in backports; use `pip` or `uv` there.
   other tools may not be recognised.
 - Pads without a `%TO.P` attribute get the reference `?` and a running pin
   number; their keys in the `.stencil` file are less stable.
+- No Windows support yet, possibly never. This is due to hard dependency on ncurses. 
 
 ## License
 
