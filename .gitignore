@@ -1,0 +1,20 @@
+# Python build artefacts
+__pycache__/
+*.pyc
+dist/
+build/
+*.egg-info/
+
+# Tool output
+stencil-out/
+
+# Packaging output
+*.pkg.tar.zst
+*.deb
+pkg/
+src/
+debian/.debhelper/
+debian/files
+debian/*.substvars
+debian/stencicrity/
+debian/debhelper-build-stamp
