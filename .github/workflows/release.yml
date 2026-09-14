@@ -1,0 +1,190 @@
+name: Release
+
+# Only "published" is used. A release that is created as a draft fires
+# "created" immediately, while there is nothing to attach assets to yet, and a
+# draft that is later published would fire a second time - so listening to
+# "created" (or to "created" and "released" together) would run this workflow
+# twice for the same release and once for a release that may never exist.
+# "published" fires exactly once, both for a release published straight away
+# and for a draft published later.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 0.1.0 or v0.1.0. Must match pcbstencil.__version__ of the ref you run this on."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Derive and check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+      tag: ${{ steps.derive.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: derive
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" = "release" ]; then
+            RAW="$RELEASE_TAG"
+          else
+            RAW="$INPUT_VERSION"
+          fi
+          # v0.1.0 and 0.1.0 are both accepted.
+          VERSION="${RAW#v}"
+          case "$VERSION" in
+            [0-9]*.[0-9]*) : ;;
+            *)
+              echo "::error::cannot read a version from '$RAW'; expected v1.2.3 or 1.2.3"
+              exit 1
+              ;;
+          esac
+          SOURCE="$(python3 -c 'import re, pathlib; print(re.search(r"__version__ = \"([^\"]+)\"", pathlib.Path("pcbstencil/__init__.py").read_text()).group(1))')"
+          if [ "$VERSION" != "$SOURCE" ]; then
+            echo "::error::the release says $VERSION but pcbstencil/__init__.py says $SOURCE. The source is the single source of truth and nothing is rewritten at build time: bump __version__, commit, and tag that commit."
+            exit 1
+          fi
+          echo "building $VERSION from tag '$RAW'"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$RAW" >> "$GITHUB_OUTPUT"
+
+  arch:
+    name: Arch package
+    needs: version
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      # git has to be there before actions/checkout, and makepkg needs its
+      # dependencies installed beforehand: "makepkg -s" would call pacman
+      # through sudo from the unprivileged build user.
+      - name: Install the toolchain
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            git sudo github-cli \
+            python python-build python-installer python-wheel python-setuptools \
+            python-shapely python-pillow python-numpy
+
+      - uses: actions/checkout@v4
+
+      - name: Prepare the build user
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          useradd -m builder
+
+      - name: Build the package
+        run: |
+          set -eu
+          git archive --prefix="stencicrity-$VERSION/" \
+            -o "packaging/arch/stencicrity-$VERSION.tar.gz" HEAD
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" packaging/arch/PKGBUILD
+          # makepkg refuses to run as root.
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          cd packaging/arch
+          sudo -u builder makepkg -f --noconfirm
+
+      - name: Inspect and install the package
+        run: |
+          set -eu
+          cd packaging/arch
+          pacman -Qip stencicrity-"$VERSION"-1-any.pkg.tar.zst
+          pacman -U --noconfirm stencicrity-"$VERSION"-1-any.pkg.tar.zst
+          stencicrity --version
+          stencicrity --help > /dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stencicrity-arch-${{ needs.version.outputs.version }}
+          path: packaging/arch/*.pkg.tar.zst
+          if-no-files-found: error
+
+      # Manual runs only build and keep the artifact; nothing is attached to a
+      # release unless this run was started by publishing one.
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: gh release upload "$TAG" packaging/arch/*.pkg.tar.zst --clobber
+
+  deb:
+    name: Debian package
+    needs: version
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      DEBIAN_FRONTEND: noninteractive
+      DEBEMAIL: lucaci32u4@gmail.com
+      DEBFULLNAME: lucaci32u4
+    steps:
+      - name: Install the toolchain
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential debhelper dh-python python3-all python3-setuptools \
+            pybuild-plugin-pyproject devscripts git ca-certificates gh
+
+      - uses: actions/checkout@v4
+
+      - name: Set the changelog version
+        run: |
+          set -eu
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if [ "$(dpkg-parsechangelog -S Version)" = "$VERSION-1" ]; then
+            echo "debian/changelog is already at $VERSION-1"
+          else
+            # --force-bad-version so that rebuilding an older tag works too.
+            dch --newversion "$VERSION-1" --distribution unstable \
+                --force-bad-version "Release $VERSION"
+          fi
+          dpkg-parsechangelog
+
+      - name: Build the package
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Collect and inspect the package
+        run: |
+          set -eu
+          mkdir -p out
+          mv ../stencicrity_"$VERSION"-1_all.deb out/
+          dpkg-deb -I out/stencicrity_"$VERSION"-1_all.deb
+          dpkg-deb -c out/stencicrity_"$VERSION"-1_all.deb
+
+      - name: Install the package
+        run: |
+          set -eu
+          apt-get install -y ./out/stencicrity_"$VERSION"-1_all.deb
+          stencicrity --version
+          stencicrity --help > /dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stencicrity-deb-${{ needs.version.outputs.version }}
+          path: out/*.deb
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: gh release upload "$TAG" out/*.deb --clobber
