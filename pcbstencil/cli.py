@@ -100,9 +100,10 @@ def build_parser() -> argparse.ArgumentParser:
     datum = group.add_mutually_exclusive_group()
     datum.add_argument("--datum", choices=list(DATUM_MODES), default=None,
                        help="alignment features cut into every cell: 'slots' "
-                            "puts three obround slots inside the cell for the "
-                            "three pin jig, 'holes' the four corner dowel "
-                            "holes, 'none' nothing (default slots)")
+                            "opens an obround slot at every jig raster "
+                            "position along the cell's bottom and left edge, "
+                            "'holes' the four corner dowel holes, 'none' "
+                            "nothing (default slots)")
     # The pre-``datum`` spelling of --datum holes / --datum none.
     datum.add_argument("--holes", dest="datum", action="store_const",
                        const=DATUM_HOLES,
@@ -120,11 +121,13 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--slot-length", type=float, default=None, metavar="MM",
                        help="slot size along the cell edge (default 12)")
     group.add_argument("--slot-offset", type=float, default=None, metavar="MM",
-                       help="cell edge to the slot's outer wall; keeps the slot "
-                            "clear of the scissor zone (default 2.25)")
-    group.add_argument("--slot-corner", type=float, default=None, metavar="MM",
-                       help="cell corner to the centre of the two bottom slots, "
-                            "along the edge (default 8)")
+                       help="cell edge to the slot's outer wall; the slot may "
+                            "clip the cell's own dotted line, never the "
+                            "neighbouring cell (default 0.5)")
+    group.add_argument("--slot-pitch", type=float, default=None, metavar="MM",
+                       help="raster of the modular jig: slot and pin centres "
+                            "along the bottom and left edge sit on it and "
+                            "cells grow to whole multiples of it (default 30)")
     group.add_argument("--slot-web", type=float, default=None, metavar="MM",
                        help="foil kept between a slot and the board; cells grow "
                             "until it fits (default 3)")
@@ -140,9 +143,9 @@ def build_parser() -> argparse.ArgumentParser:
                             "edge; 0 draws a single line on the edge "
                             "(default 2.5)")
     group.add_argument("--hole-grid", type=float, default=None, metavar="MM",
-                       help="put every pin centre (holes or slots) on one "
-                            "common grid of this pitch, 0 switches it off "
-                            "(default 8)")
+                       help="holes datum: put every dowel hole of the sheet on "
+                            "one common grid of this pitch, 0 switches it off; "
+                            "the slots datum uses --slot-pitch (default 8)")
     border = group.add_mutually_exclusive_group()
     border.add_argument("--outer-border", dest="outer_border",
                         action="store_const", const=True, default=None,
@@ -208,7 +211,7 @@ def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
             ("--slot-length", args.slot_length, lambda v: v > 0, "must be positive"),
             ("--slot-offset", args.slot_offset, lambda v: v >= 0,
              "must not be negative"),
-            ("--slot-corner", args.slot_corner, lambda v: v > 0, "must be positive"),
+            ("--slot-pitch", args.slot_pitch, lambda v: v > 0, "must be positive"),
             ("--slot-web", args.slot_web, lambda v: v > 0, "must be positive"),
             ("--pin-dia", args.pin_dia, lambda v: v > 0, "must be positive"),
             ("--dot-dia", args.dot_dia, lambda v: v > 0, "must be positive"),
@@ -247,7 +250,7 @@ def apply_cli_config(config: Config, args: argparse.Namespace) -> None:
                         ("slot_width", args.slot_width),
                         ("slot_length", args.slot_length),
                         ("slot_offset", args.slot_offset),
-                        ("slot_corner", args.slot_corner),
+                        ("slot_pitch", args.slot_pitch),
                         ("slot_web", args.slot_web),
                         ("pin_dia", args.pin_dia),
                         ("dot_dia", args.dot_dia),
@@ -327,9 +330,9 @@ def _write_paste(layout: Layout, path: str, name: str, open_shrink: float) -> st
     """Write the paste layer: source openings, decided pads, dots and the datum.
 
     Openings of pads the user closed are left out (``side.active_paste_objects``).
-    The alignment features come last: three obround slots per cell for the
-    ``slots`` datum, four round holes per cell for ``holes``, nothing for
-    ``none``.
+    The alignment features come last: one obround slot per jig raster position
+    along the bottom and left edge of every cell for the ``slots`` datum, four
+    round holes per cell for ``holes``, nothing for ``none``.
     """
     from shapely.affinity import affine_transform
 

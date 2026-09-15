@@ -112,7 +112,7 @@ classDiagram
         +float slot_width
         +float slot_length
         +float slot_offset
-        +float slot_corner
+        +float slot_pitch
         +float slot_web
         +float pin_dia
         +float dot_dia
@@ -285,21 +285,21 @@ The `[layout]` section and the Layout page of the TUI, one dataclass.
 | `hole_inset` | mm | 2.0 | Cell edge to the *edge* of the hole. May be negative, which moves the hole out onto the edge. |
 | `slot_width` | mm | 4.5 | Slot size *across* the cell edge (`slots` datum). |
 | `slot_length` | mm | 12.0 | Slot size *along* the cell edge. |
-| `slot_offset` | mm | 2.25 | Cell edge to the slot's outer wall. Keeps the slot out of the scissor zone; may be 0 but never negative. |
-| `slot_corner` | mm | 8.0 | Cell corner to the centre of each of the two bottom slots, along the bottom edge. |
+| `slot_offset` | mm | 0.5 | Cell edge to the slot's outer wall. The slot may clip the cell's *own* dotted line (which runs `dot_line_gap/2` inside the edge) but never reaches the neighbouring cell; may be 0 but never negative. |
+| `slot_pitch` | mm | 30.0 | Raster of the modular jig: slot centres along the bottom and left edges and the pin centres across them lie on it, and cells grow to whole multiples of it. Must be positive. |
 | `slot_web` | mm | 3.0 | Least foil between a slot's inner wall and the board. A cell grows until it fits. |
 | `pin_dia` | mm | 3.0 | Jig pin diameter for the `slots` datum; the `holes` datum uses `hole_dia` pins. |
 | `dot_dia` | mm | 0.5 | Divider dot diameter. Also the minimum distance used to deduplicate dots. |
 | `dot_pitch` | mm | 3.0 | Centre-to-centre spacing of the divider dots. |
 | `dot_line_gap` | mm | 2.5 | How far *inside* its edge a cell's dotted line runs: half of this. Two touching cells therefore show two lines this far apart and the cut goes between them; 0 puts every line on the edge itself, so touching cells share one. |
-| `hole_grid` | mm | 8.0 | Common grid every *jig pin centre* must land on, measured from the sheet origin - for either datum. 0 switches the grid off. |
+| `hole_grid` | mm | 8.0 | `holes` datum only: the common grid every dowel hole (and so every jig pin) must land on, measured from the sheet origin. 0 switches it off. The `slots` datum has its own raster, `slot_pitch`. |
 | `outer_border` | - | False | Also dot the cell edges that lie on the outer boundary of the block. |
 | `sort` | - | `"height"` | `height` (tallest board first) or `name`. |
 
 The derived values, all used in `layout.py`:
 
 * `pad` = `gap / 2` - the padding between a board and its cell edge. The cell
-  grows for the hole grid and for the slot padding, so `pad` becomes the
+  grows for the slot raster and for the hole grid, so `pad` becomes the
   *minimum* padding and the report prints `padding ≥ 15.0 mm`.
 * `holes` - **a read-only property**, `datum == "holes"`. It used to be a
   writable boolean field; everything that set `holes=True/False` now sets
@@ -309,13 +309,15 @@ The derived values, all used in `layout.py`:
 * `hole_offset` = `hole_inset + hole_dia / 2` - cell edge to the hole *centre*
   (`holes` datum). With the defaults that is 4.5 mm.
 * `slot_inner` = `slot_offset + slot_width` - cell edge to the slot's inner
-  wall, the wall the pin touches. 6.75 mm by default.
+  wall, the wall the pin touches. 5.0 mm by default.
 * `pin_offset` - cell edge to the pin centre of whichever datum is active:
-  `slot_inner - pin_dia / 2` (5.25 mm) for slots, `hole_offset` for holes. This
-  is the number the grid arithmetic snaps.
+  `slot_inner - pin_dia / 2` (3.5 mm) for slots, `hole_offset` (4.5 mm) for
+  holes. This is the number the raster arithmetic snaps: a cell corner sits at
+  `k * pitch - pin_offset`.
 * `min_pad_for_slots` = `slot_inner + slot_web` - the smallest cell padding
-  that hosts a slot plus its web to the board. 9.75 mm by default, so the
-  default 15 mm padding is comfortable.
+  that hosts a slot plus its web to the board. 8.0 mm by default, so the
+  default 15 mm padding is comfortable and the rounding to whole `slot_pitch`
+  steps is what actually sizes the cell.
 
 ### `Config`
 
@@ -355,8 +357,8 @@ The placement of one side, produced by `layout.pack()`.
 | `row` | The index in the packing order. Informational only - there are no rows, the cells are packed with MaxRects. |
 | `overflow` | The cell did not fit and was parked to the right of the sheet. |
 | `holes` | The dowel hole centres of this cell in sheet coordinates (`holes` datum). Empty under any other datum *or* when a neighbouring cell already carries the same hole. |
-| `slots` | The obround slots of this cell as `(cx, cy, w, h)` in sheet coordinates, `w` along x and `h` along y (`slots` datum; empty otherwise). Three per cell: two on the bottom edge (`length x width`) and one on the left edge (`width x length`). |
-| `pins` | The jig pin centres in sheet coordinates, for *either* datum: tangent to the slots' inner walls for `slots`, identical to `holes` for `holes`, empty for `none`. This is what `hole_grid` snaps. |
+| `slots` | The obround slots of this cell as `(cx, cy, w, h)` in sheet coordinates, `w` along x and `h` along y (`slots` datum; empty otherwise). One per `slot_pitch` raster position that fits: first the bottom edge left to right (`length x width`), then the left edge bottom to top (`width x length`). An edge of `n` pitches carries `n - 1` of them, and a cell always has at least 2 + 1. |
+| `pins` | The jig pin centres in sheet coordinates, for *either* datum: one per slot, tangent to its inner wall, for `slots`; identical to `holes` for `holes`; empty for `none`. Every one of them lies on the datum's raster (`slot_pitch` or `hole_grid`). |
 | `datum_corner` | The cell corner the cut-out piece is pushed toward - the cell's bottom left, `(x, y)`. For a mirrored side that is the board's physical bottom *right*. |
 
 `rect` is `(x, y, x + w, y + h)`.

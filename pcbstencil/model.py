@@ -22,16 +22,21 @@ edges, ``dot_line_gap/2`` inside the edge, so two touching cells show two
 lines ``dot_line_gap`` apart and the scissors cut between them; the lines on
 the outer boundary of the whole block are left out unless ``outer_border``.
 
-Alignment features (``datum``): with ``slots`` every cell gets three obround
-slots that lie completely inside its own cell padding (never touching the
-scissor zone or a neighbour): two along the bottom edge, ``slot_corner`` from
-the corners, and one along the left edge at mid height. The jig pins pass
-through the slots and the piece is pushed toward the bottom-left datum corner
-so the slot walls nearest the board touch the pins: three contacts, exact
-constraint. With ``holes`` every cell gets four round holes near its corners
-(legacy). ``hole_grid`` snaps the pin centres of either datum onto a common
-grid. The block of all cells is centred on the stencil (keeping the grid
-alignment).
+Alignment features (``datum``): with ``slots`` the cells are sized to
+multiples of ``slot_pitch`` (the raster of a modular pin jig) and every cell
+carries an obround slot at every raster position along its bottom edge and
+its left edge, ``slot_offset`` inside the edge. A slot lies completely inside
+its own cell (it may clip the cell's dotted line, never a neighbour) and
+keeps ``slot_web`` of foil to the board. The jig pins pass through the slots;
+the pin centre (``pin_offset`` inside the edge) lies on the same raster, so
+two slots on one of the two edges plus one on the other give an exact
+three-contact location when the piece is pushed toward the bottom-left
+corner; cells are sized so that this is always possible. Cell corners sit on
+the raster with phase ``-pin_offset`` so touching cells share the raster and
+their dotted lines are exactly ``dot_line_gap`` apart. With
+``holes`` every cell gets four round holes near its corners (legacy);
+``hole_grid`` snaps those. The block of all cells is centred on the stencil
+(keeping the raster alignment).
 """
 from __future__ import annotations
 
@@ -66,7 +71,7 @@ SORT_ORDERS = (SORT_HEIGHT, SORT_NAME)
 DEFAULT_IGNORE_PREFIXES: tuple[str, ...] = ("NT", "TP")
 
 # Alignment datum cut into every cell for the pin jig.
-DATUM_SLOTS = "slots"    # three obround slots inside the cell, pins pass through them, piece pushed to the datum corner
+DATUM_SLOTS = "slots"    # obround slots at every slot_pitch raster position along the bottom and left cell edges; pins pass through them, piece pushed to the datum corner
 DATUM_HOLES = "holes"    # four round holes near the cell corners (legacy, over-constrained but simple)
 DATUM_NONE = "none"      # no alignment features
 DATUM_MODES = (DATUM_SLOTS, DATUM_HOLES, DATUM_NONE)
@@ -248,8 +253,8 @@ class LayoutParams:
     # -- slots datum --
     slot_width: float = 4.5    # slot size across the cell edge (mm)
     slot_length: float = 12.0  # slot size along the cell edge (mm)
-    slot_offset: float = 2.25  # cell edge to the slot's outer wall (mm); keeps the slot clear of the scissor zone
-    slot_corner: float = 8.0   # cell corner to the centre of the two bottom slots, along the edge (mm)
+    slot_offset: float = 0.5   # cell edge to the slot's outer wall (mm); the slot may clip the dotted line but never the neighbour
+    slot_pitch: float = 30.0   # raster of the modular jig (mm): slot centres along the bottom and left edges and pin centres across them lie on it; cells grow to multiples of it
     slot_web: float = 3.0      # minimum foil between a slot's inner wall and the board (mm); cells grow to keep it
     pin_dia: float = 3.0       # jig pin diameter for the slots datum (mm); the holes datum uses hole_dia pins
     # -- dotted border --
@@ -257,7 +262,7 @@ class LayoutParams:
     dot_pitch: float = 3.0     # centre-to-centre distance of divider dots (mm)
     dot_line_gap: float = 2.5  # every cell's own dotted line runs dot_line_gap/2 inside its edge; touching cells thus show two lines this far apart and the cut goes between them (0 = on the edge)
     # -- jig --
-    hole_grid: float = 8.0     # pin centres (holes or slots) snap to a grid of this pitch (mm); 0 = off
+    hole_grid: float = 8.0     # holes datum: hole centres snap to a grid of this pitch (mm); 0 = off (the slots datum uses slot_pitch)
     outer_border: bool = False # also dot the cell edges on the outer boundary of the block
     sort: str = SORT_HEIGHT    # cell order: SORT_HEIGHT (tallest boards first) or SORT_NAME
 
@@ -337,7 +342,7 @@ class Area:
     overflow: bool = False     # did not fit on the sheet; parked to the right of it
     holes: list[tuple[float, float]] = field(default_factory=list)   # round hole centres, sheet coords (holes datum)
     slots: list[tuple[float, float, float, float]] = field(default_factory=list)  # obround slots (cx, cy, w, h), sheet coords (slots datum); w along x, h along y
-    pins: list[tuple[float, float]] = field(default_factory=list)    # jig pin centres, sheet coords (both datums; == holes for the holes datum)
+    pins: list[tuple[float, float]] = field(default_factory=list)    # jig pin centres, sheet coords (one per slot for the slots datum; == holes for the holes datum)
     datum_corner: tuple[float, float] = (0.0, 0.0)   # sheet coords of the corner the piece is pushed toward (slots datum: bottom-left of the cell)
 
     @property

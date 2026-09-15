@@ -105,7 +105,7 @@ level, so a test host still needs it), and a render test should use a small
 
 Say you want `frame_width`. Seven places, in this order. (The `datum` switch
 and its six `slot_*` numbers went through exactly these steps; grep for
-`slot_corner` to see one parameter in all seven at once, and for `datum` to see
+`slot_pitch` to see one parameter in all seven at once, and for `datum` to see
 a `choice` rather than a number.)
 
 1. **`model.LayoutParams`** - add the field with its default and a comment
@@ -146,7 +146,30 @@ present), the old command line spelling stays as a hidden-in-spirit alias
 read-only property on `LayoutParams` so call sites that only *read* it keep
 working. See [pads-and-config.md](pads-and-config.md) for the mapping table.
 
+**Dropping one.** `slot_corner` (the distance from the cell corner to the two
+bottom slots) died when the slots moved onto the `slot_pitch` raster: there is
+nothing left to map it onto. The field, the `_LAYOUT_FLOATS` entry, the
+`format_config()` line, the `--slot-corner` option and the TUI row all go, and
+the key is added to `config._OBSOLETE_LAYOUT_KEYS` instead, which makes
+`load_config()` read and drop it **without a warning** - an old file loads
+silently and simply loses the key the next time it is written. A parameter that
+still means something to the user gets an alias; one that no longer exists gets
+a place on that list.
+
 Then re-run the batch smoke check and diff the generated `.stencicrity`.
+
+**A worked example, `slot_pitch`.** `model.LayoutParams` gained
+`slot_pitch = 30.0` (and `slot_offset` dropped to 0.5, `pin_offset` to 3.5 mm);
+`config._LAYOUT_FLOATS` got `("slot_pitch", v > 0)` plus an `_entry()` line, and
+`slot_corner` moved to `_OBSOLETE_LAYOUT_KEYS`; `cli` traded `--slot-corner` for
+`--slot-pitch` in the parser, `_check_args()` and `apply_cli_config()`;
+`tui.LAYOUT_FIELDS` traded the `slot corner distance` row for
+`slot pitch (modular jig raster)` (step 5, minimum 1) and relabelled
+`hole_grid` to `hole grid (holes datum, 0 = off)`; `layout._cell_of` rounds the
+cell up to whole pitches and `_slot_offsets` places one slot per raster
+position along the bottom and left edges; `layout_report()` prints the raster
+and the per-edge slot counts. Docs: this file, `README.md`, `layout.md`,
+`data-model.md`, `pads-and-config.md`, `tui.md` and `render.md`.
 
 ## Release process
 

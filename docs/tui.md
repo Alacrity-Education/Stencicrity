@@ -143,18 +143,21 @@ plus value (or the edit buffer with a trailing `_` while editing):
 | `slot_width` | slot width | length | mm | 0.5 | 0.1 | `gt0` |
 | `slot_length` | slot length | length | mm | 0.5 | 0.1 | `gt0` |
 | `slot_offset` | slot offset (edge to outer wall) | length | mm | 0.5 | 0.0 | `ge0` |
-| `slot_corner` | slot corner distance | length | mm | 0.5 | 0.1 | `gt0` |
+| `slot_pitch` | slot pitch (modular jig raster) | length | mm | 5.0 | 1.0 | `gt0` |
 | `slot_web` | slot web (to board) | length | mm | 0.5 | 0.1 | `gt0` |
 | `pin_dia` | pin diameter | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_dia` | dot diameter | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_pitch` | dot pitch | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_line_gap` | dotted line gap (between touching cells) | length | mm | 0.5 | 0.0 | `ge0` |
-| `hole_grid` | pin grid (0 = off) | length | mm | 1.0 | 0.0 | `ge0` |
+| `hole_grid` | hole grid (holes datum, 0 = off) | length | mm | 1.0 | 0.0 | `ge0` |
 | `outer_border` | outer border | bool | — | — | — | — |
 | `sort` | sort | choice | — | — | — | height \| name |
 
 `hole_inset` is the only unbounded number: it may go negative, which puts the
-dowel hole onto the dotted line instead of beside it. `Field.numeric` is true
+dowel hole onto the dotted line instead of beside it. `slot_pitch` is the only
+row that steps by more than 0.5 mm: it moves in 5 mm steps and clamps at 1 mm,
+because it is a jig raster, not a fit-and-finish dimension — every cell is
+rounded up to a whole number of it, so a small change moves the whole sheet. `Field.numeric` is true
 only for `kind == "length"`, which is what decides between stepping/editing and
 toggling. See [data-model.md](data-model.md) for what each parameter means.
 
@@ -163,11 +166,13 @@ toggling. See [data-model.md](data-model.md) for what each parameter means.
 slots → holes → none. It also decides which of the other rows are *relevant*:
 `DATUM_ROWS` maps each datum-specific attribute to the mode it belongs to and
 `field_applies(field, params)` answers whether a row matters right now — the
-two hole rows under `slots`, the six slot rows under `holes`, and both groups
-under `none`, are drawn with `curses.A_DIM` added to their attribute (the
-cursor's `A_REVERSE` still wins visually). The rows that are shared by every
-datum — spacing, the dots, the pin grid, the outer border and the sort order —
-are never dimmed.
+two hole rows under `slots`, the six slot rows (`slot_width`, `slot_length`,
+`slot_offset`, `slot_pitch`, `slot_web`, `pin_dia`) under `holes`, and both
+groups under `none`, are drawn with `curses.A_DIM` added to their attribute
+(the cursor's `A_REVERSE` still wins visually). The rows that are shared by
+every datum — spacing, the dots, the hole grid, the outer border and the sort
+order — are never dimmed; `hole_grid` only bites under `holes`, which its label
+says.
 
 Dimming is presentation only. A dimmed row still steps, still edits and still
 saves: that is deliberate, so a slot size can be dialled in before switching

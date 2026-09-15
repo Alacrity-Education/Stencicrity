@@ -12,35 +12,42 @@ Every cell also carries the *datum* the jig pins locate it by
 (``LayoutParams.datum``):
 
 ``slots``
-    Three obround slots that lie completely inside the cell's own padding -
-    two on the bottom edge, ``slot_corner`` from the corners, one on the left
-    edge at mid height.  Their outer wall is ``slot_offset`` inside the cell
-    edge, so they never reach the scissor zone, never cross into a
-    neighbouring cell and never come closer than ``slot_web`` to the board
-    (the cell padding has a floor of ``min_pad_for_slots`` and the cell grows
-    when the board is too close).  The piece is lowered over three pins that
-    pass through the slots and pushed toward the bottom-left *datum corner*,
-    so the wall nearest the board - the inner wall, ``slot_inner`` inside the
-    cell edge - touches its pin: three contacts, exact constraint.
+    Obround slots at every position of the ``slot_pitch`` raster - the raster
+    of the modular pin jig - along the cell's bottom edge and along its left
+    edge (never the top or the right one), so a jig carrying pins on that
+    raster can locate the piece with any of them.  Cell sizes are whole
+    multiples of the pitch and cell corners sit at ``k * pitch - pin_offset``,
+    so one raster runs across the whole sheet and touching cells share it; an
+    edge of ``n`` pitches then carries ``n - 1`` slots and a cell is grown
+    until its longer edge has two of them and its shorter edge one - what an
+    exact three-contact location needs.  A slot's outer wall is
+    ``slot_offset`` inside the cell edge: it clips the cell's own dotted line
+    but never reaches into the neighbouring cell, which keeps the foil next to
+    the board free for the squeegee.  The inner wall - ``slot_inner`` inside
+    the edge - stays ``slot_web`` away from the board (the cell padding has a
+    floor of ``min_pad_for_slots``).  The piece is lowered over the pins and
+    pushed toward the bottom-left *datum corner*, so the wall nearest the
+    board touches its pin: two contacts on one edge, one on the other, exact
+    constraint.
 ``holes``
     Four round dowel holes near the cell corners, ``hole_inset`` away from the
     cell edges (the legacy, over-constrained scheme).
 ``none``
     No alignment features at all.
 
-``hole_grid`` puts *every* jig pin centre of the whole sheet on one common
-grid of that pitch, so the stencil can be pinned onto a fixture plate whose
-dowels sit on that raster.  A pin is ``pin_offset`` inside the cell corner, so
-the cell corner must sit at ``k * pitch - pin_offset`` (the packer only places
-cells there, and the block is centred by a whole number of pitches so the grid
-is measured from the sheet origin).  Cells therefore no longer have to touch -
-the leftover slivers are simply free space.  For the ``holes`` datum the
-hole-to-hole distance inside a cell, ``cell - 2*hole_offset``, must be a
-multiple of the pitch as well, so the cell is grown until it is (the board
-stays centred and the padding only ever gets larger than ``gap/2``).  The
-``slots`` datum never grows a cell for the grid: the slot centres are moved
-onto the raster along their edge instead.  ``hole_grid = 0`` switches all of
-that off.
+Both datums put *every* jig pin centre of the whole sheet on one common
+raster, so the stencil can be pinned onto a fixture plate whose pins sit on
+it.  A pin is ``pin_offset`` inside the cell corner, so the cell corner must
+sit at ``k * pitch - pin_offset``: the packer only places cells there and the
+block is centred by a whole number of pitches, so the raster is measured from
+the sheet origin.  The ``slots`` datum uses ``slot_pitch`` and cells that are
+whole multiples of it, so neighbouring cells still touch exactly.  The
+``holes`` datum uses ``hole_grid``: there the hole-to-hole distance inside a
+cell, ``cell - 2*hole_offset``, has to be a multiple of the pitch as well, so
+the cell is grown until it is (the board stays centred and the padding only
+ever gets larger than ``gap/2``); cells then no longer have to touch and the
+leftover slivers are simply free space.  ``hole_grid = 0`` switches that off
+and has no effect on the ``slots`` datum.
 
 The cells are packed into the sheet with a MaxRects bin packer (Jylanki's
 MaxRectsBinPack, no rotation): the free space is kept as a list of *maximal*
@@ -106,8 +113,11 @@ _ALIGN_EPS = 1e-9
 #: Two holes closer than this are the same hole (neighbouring cells share them
 #: when ``hole_inset == -hole_dia / 2``, i.e. the holes sit on the dotted line).
 _HOLE_EPS = 1e-6
-#: Slack of the hole grid arithmetic, in grid steps (see _snap_up / _grid_size).
+#: Slack of the pin raster arithmetic, in steps (see _snap_up / _grid_size).
 _GRID_EPS = 1e-9
+#: Safety net of _edge_for_slots: no cell edge is ever grown past this many
+#: pitches looking for a slot position.
+_MAX_PITCH_STEPS = 1000
 
 #: Placement heuristics, in preference order (the first one wins a tie).
 HEURISTIC_BL = "bottom-left"
@@ -140,10 +150,16 @@ def ordered_sides(sides: list[Side], params: LayoutParams) -> list[Side]:
 # The jig pin grid
 # --------------------------------------------------------------------------- #
 def _grid_of(params: LayoutParams) -> float:
-    """The pin grid that actually applies (``none`` has no pins to align)."""
-    if params.datum == DATUM_NONE:
-        return 0.0
-    return max(0.0, params.hole_grid)
+    """The pin raster that actually applies to the layout's datum.
+
+    ``slots`` rides on ``slot_pitch`` (the raster of the modular jig, which
+    also sizes the cells), ``holes`` on ``hole_grid``, ``none`` on nothing.
+    """
+    if params.slots:
+        return max(0.0, params.slot_pitch)
+    if params.holes:
+        return max(0.0, params.hole_grid)
+    return 0.0
 
 
 def _grid_size(size: float, ho: float, grid: float) -> float:
@@ -193,25 +209,10 @@ def _snap_down(value: float, grid: float) -> float:
     return max(0.0, steps * grid)
 
 
-def _on_grid_in(value: float, lo: float, hi: float, grid: float) -> float:
-    """The grid point nearest ``value`` that still lies inside ``[lo, hi]``.
-
-    Staying inside the interval wins over the grid: when the interval holds no
-    grid point at all (a very small cell) the clamped ``value`` is returned and
-    the report says the pins are off the grid.  ``grid <= 0`` only clamps.
-    """
-    if hi < lo:                                  # degenerate interval: its middle
-        lo = hi = (lo + hi) / 2.0
-    if grid <= 0.0:
-        return min(max(value, lo), hi)
-    best = round(value / grid) * grid
-    if best < lo:
-        best = math.ceil(lo / grid - _GRID_EPS) * grid
-    elif best > hi:
-        best = math.floor(hi / grid + _GRID_EPS) * grid
-    if best < lo - _FIT_EPS or best > hi + _FIT_EPS:
-        return min(max(value, lo), hi)           # no grid point fits in the cell
-    return best
+def _ceil_pitch(value: float, pitch: float) -> float:
+    """``value`` rounded up to a whole (at least one) multiple of ``pitch``."""
+    steps = max(1, math.ceil(value / pitch - _GRID_EPS))
+    return steps * pitch
 
 
 # --------------------------------------------------------------------------- #
@@ -221,19 +222,25 @@ def _cell_of(board_w: float, board_h: float, params: LayoutParams,
              grid: float) -> tuple[float, float]:
     """Cell size around one board: ``board + gap``, grown for the datum.
 
-    ``slots`` needs ``min_pad_for_slots`` of padding on every side (slot plus
-    the web to the board) and a cell that is long enough for the two bottom
-    slots side by side and tall enough for the left one; the grid never grows
-    it.  ``holes`` grows the cell until the hole spacing is a multiple of the
-    grid pitch.  ``none`` is exactly ``board + gap``.
+    ``slots`` needs ``min_pad_for_slots`` of padding on every side (the slot
+    plus the web to the board), a size that is a whole number of ``slot_pitch``
+    steps - so touching cells keep one raster - and enough of them for two
+    slots on the longer edge and one on the shorter (see :func:`_slot_offsets`).
+    ``holes`` grows the cell until the hole spacing is a multiple of
+    ``hole_grid``.  ``none`` is exactly ``board + gap``.
     """
     cw, ch = board_w + params.gap, board_h + params.gap
     if params.slots:
-        pad = params.min_pad_for_slots
-        along = params.slot_length + 2.0 * params.slot_offset
-        return (max(cw, board_w + 2.0 * pad,
-                    2.0 * params.slot_corner + params.slot_length, along),
-                max(ch, board_h + 2.0 * pad, along))
+        pad = max(params.pad, params.min_pad_for_slots)
+        cw, ch = board_w + 2.0 * pad, board_h + 2.0 * pad
+        pitch = max(0.0, params.slot_pitch)
+        if pitch <= 0.0:
+            return (cw, ch)                      # no raster: padding only
+        cw, ch = _ceil_pitch(cw, pitch), _ceil_pitch(ch, pitch)
+        two, one = _edge_for_slots(2, params), _edge_for_slots(1, params)
+        if cw >= ch:                             # two slots along the longer edge
+            return (max(cw, two), max(ch, one))
+        return (max(cw, one), max(ch, two))
     if params.holes:
         return _cell_size(cw, ch, params.hole_offset, grid)
     return (cw, ch)
@@ -249,33 +256,37 @@ def _slot_span(start: float, size: float, params: LayoutParams) -> tuple[float, 
     return (start + params.slot_offset + half, start + size - params.slot_offset - half)
 
 
-def _bottom_slot_xs(x0: float, w: float, params: LayoutParams,
-                    grid: float) -> tuple[float, float]:
-    """X of the two bottom slot centres, ``slot_corner`` from the cell corners.
+def _slot_offsets(size: float, params: LayoutParams) -> list[float]:
+    """Slot centres along one cell edge of ``size``, measured from its corner.
 
-    The bottom pins sit at these X coordinates, so with a pin grid both are
-    moved onto the nearest grid point; the slot is kept inside its cell and the
-    two are pushed apart when the grid would make them overlap.
+    The cell corner sits at ``k * slot_pitch - pin_offset``, so the raster
+    positions seen from the corner are ``pin_offset + k * slot_pitch``; every
+    one of them that leaves the slot ``slot_offset`` clear of both ends of the
+    edge carries a slot (with the default numbers an edge of ``n`` pitches
+    gets ``n - 1``).  All of them are opened, so a modular jig may use any.
     """
-    lo, hi = _slot_span(x0, w, params)
-    left, right = x0 + params.slot_corner, x0 + w - params.slot_corner
-    if grid <= 0.0:
-        return (left, right)                     # exactly slot_corner from the corners
-    length = params.slot_length
-    xl = _on_grid_in(left, lo, hi, grid)
-    xr = _on_grid_in(right, max(lo, xl + length), hi, grid)
-    if xr - xl < length - _FIT_EPS:              # try the other way round
-        xr = _on_grid_in(right, lo, hi, grid)
-        xl = _on_grid_in(left, lo, min(hi, xr - length), grid)
-    if xr - xl < length - _FIT_EPS:              # cell too short: spread them out
-        xl, xr = _on_grid_in(lo, lo, hi, grid), _on_grid_in(hi, lo, hi, grid)
-    return (xl, xr)
+    pitch = max(0.0, params.slot_pitch)
+    if pitch <= 0.0:
+        return []
+    lo, hi = _slot_span(0.0, size, params)
+    if hi < lo:
+        return []                                # the cell is shorter than a slot
+    offset = params.pin_offset
+    first = math.ceil((lo - offset) / pitch - _GRID_EPS)
+    last = math.floor((hi - offset) / pitch + _GRID_EPS)
+    return [offset + k * pitch for k in range(first, last + 1)]
 
 
-def _left_slot_y(y0: float, h: float, params: LayoutParams, grid: float) -> float:
-    """Y of the left slot centre: cell mid height, moved onto the pin grid."""
-    lo, hi = _slot_span(y0, h, params)
-    return _on_grid_in(y0 + h / 2.0, lo, hi, grid)
+def _edge_for_slots(count: int, params: LayoutParams) -> float:
+    """Shortest whole number of pitches whose edge carries ``count`` slots."""
+    pitch = max(0.0, params.slot_pitch)
+    if pitch <= 0.0:
+        return 0.0
+    steps = 1
+    while (len(_slot_offsets(steps * pitch, params)) < count
+           and steps < _MAX_PITCH_STEPS):
+        steps += 1
+    return steps * pitch
 
 
 def _datum(x: float, y: float, w: float, h: float, params: LayoutParams,
@@ -285,22 +296,26 @@ def _datum(x: float, y: float, w: float, h: float, params: LayoutParams,
                       list[tuple[float, float]]]:
     """The alignment features of the cell at ``(x, y, w, h)``.
 
-    Returns ``(holes, slots, pins)`` in sheet coordinates.  For ``slots`` the
-    pins are tangent to the slot walls nearest the board (the piece is pushed
-    toward the bottom-left corner, so a bottom pin touches the slot from below
-    and the left pin from the left); for ``holes`` the pins are the holes.
+    Returns ``(holes, slots, pins)`` in sheet coordinates.  For ``slots``
+    every raster position along the bottom edge and along the left edge gets
+    one (bottom edge first, left to right, then the left edge bottom to top);
+    the pins are tangent to the slot walls nearest the board (the piece is
+    pushed toward the bottom-left corner, so a bottom pin touches its slot
+    from below and a left pin from the left).  For ``holes`` the pins are the
+    holes.
     """
     if params.slots:
         width, length = params.slot_width, params.slot_length
-        xl, xr = _bottom_slot_xs(x, w, params, grid)
-        yc = _left_slot_y(y, h, params, grid)
-        bottom = y + params.slot_offset + width / 2.0       # centre of a bottom slot
-        left = x + params.slot_offset + width / 2.0         # centre of the left slot
-        slots = [(xl, bottom, length, width),
-                 (xr, bottom, length, width),
-                 (left, yc, width, length)]
-        pin = params.slot_inner - params.pin_dia / 2.0      # == params.pin_offset
-        pins = [(xl, y + pin), (xr, y + pin), (x + pin, yc)]
+        across = params.slot_offset + width / 2.0     # cell edge to the slot centre
+        pin = params.pin_offset                       # == slot_inner - pin_dia / 2
+        slots: list[tuple[float, float, float, float]] = []
+        pins: list[tuple[float, float]] = []
+        for offset in _slot_offsets(w, params):       # the bottom edge
+            slots.append((x + offset, y + across, length, width))
+            pins.append((x + offset, y + pin))
+        for offset in _slot_offsets(h, params):       # the left edge
+            slots.append((x + across, y + offset, width, length))
+            pins.append((x + pin, y + offset))
         return [], slots, pins
     if params.holes:
         holes = _holes(x, y, w, h, params, seen)
@@ -389,10 +404,12 @@ def _maxrects(cells: list[tuple[float, float]], sheet_w: float, sheet_h: float,
     """Place ``cells`` (in order) into ``(0, 0, sheet_w, sheet_h)``.
 
     Returns one bottom-left corner per cell, ``None`` for a cell that did not
-    fit into any free rectangle.  With a hole ``grid`` the bottom left corner of
-    a free rectangle is first snapped up to the next position whose holes land
-    on the grid; the cell has to fit in what is left of the free rectangle and
-    is scored there.  The sliver below and left of the cell stays free space.
+    fit into any free rectangle.  With a pin ``grid`` the bottom left corner of
+    a free rectangle is first snapped up to the next position whose pins land
+    on the raster; the cell has to fit in what is left of the free rectangle
+    and is scored there.  The sliver below and left of the cell stays free
+    space (with the ``slots`` datum only along the sheet edges: cell sizes are
+    whole multiples of the pitch, so cells placed next to each other touch).
     """
     score = _SCORE[heuristic]
     free: list[tuple[float, float, float, float]] = []
@@ -456,20 +473,20 @@ def pack(sides: list[Side], config: Config) -> Layout:
     The packing is deterministic: the sides are ordered by ``config.layout.sort``
     and their cells (``board + gap``, grown for the datum) are packed with
     MaxRects; the block of placed cells is then centred on the stencil (by a
-    whole number of grid pitches, so the jig pins stay on the grid).  Cells
+    whole number of raster pitches, so the jig pins stay on the raster).  Cells
     that fit nowhere are lined up to the right of the sheet and make
     ``Layout.fits`` ``False``.
     """
     params = config.layout
     sheet_w, sheet_h = config.sheet_size()
-    grid = _grid_of(params)
+    grid = _grid_of(params)         # slot_pitch (slots) or hole_grid (holes)
     ho = params.pin_offset          # cell edge to pin centre, for both datums
 
     order = ordered_sides(sides, params)
     cells: list[tuple[float, float]] = []
     for side in order:
         minx, miny, maxx, maxy = side.project.bbox
-        # gap/2 per side, then grown for the datum (slot padding / hole grid).
+        # gap/2 per side, then grown for the datum (slot raster / hole grid).
         cells.append(_cell_of(maxx - minx, maxy - miny, params, grid))
 
     # 1. Pack, then line the cells that fit nowhere up right of the sheet.
@@ -482,8 +499,8 @@ def pack(sides: list[Side], config: Config) -> Layout:
         x = _snap_up(x + cells[i][0], ho, grid)
 
     # 2. Centre the block of *placed* cells on the stencil (overflow moves too).
-    #    The offset is a whole number of grid pitches, so every hole stays on
-    #    the grid measured from the sheet origin.
+    #    The offset is a whole number of raster pitches, so every pin stays on
+    #    the raster measured from the sheet origin.
     placed = [i for i in range(len(cells)) if i not in overflow_set]
     if placed:
         block_w = max(spots[i][0] + cells[i][0] for i in placed)
@@ -807,6 +824,31 @@ def _fmt_point(p: tuple[float, float]) -> str:
     return f"({p[0]:.2f}, {p[1]:.2f})"
 
 
+def _crowded(params: LayoutParams) -> str:
+    """Why the slots of one cell would run into each other, or ``""``.
+
+    Only reachable with hand-set numbers: a slot longer than the raster pitch
+    makes two neighbours on the same edge overlap, and a first raster position
+    closer to the corner than ``slot_inner + slot_length/2`` makes the first
+    bottom slot and the first left slot meet in the corner of the cell.
+    """
+    if params.slot_pitch <= 0.0:
+        return "slot_pitch must be positive: no slots are cut at all"
+    if params.slot_length > params.slot_pitch + _FIT_EPS:
+        return (f"slot_length {params.slot_length:g} mm is longer than the "
+                f"{params.slot_pitch:g} mm raster: two slots on one edge overlap")
+    first = _slot_offsets(1000.0 * max(params.slot_pitch, 1.0), params)
+    if first and first[0] < params.slot_inner + params.slot_length / 2.0 - _FIT_EPS:
+        return ("the first raster position is so close to the corner that the "
+                "first bottom slot and the first left slot overlap there")
+    return ""
+
+
+def _edge_counts(area: Area, params: LayoutParams) -> tuple[int, int]:
+    """How many slots ``area`` carries on its bottom edge and on its left edge."""
+    return (len(_slot_offsets(area.w, params)), len(_slot_offsets(area.h, params)))
+
+
 def _on_grid(value: float, grid: float) -> bool:
     """Is ``value`` a whole number of ``grid``, measured from the sheet origin?"""
     if grid <= 0.0:
@@ -816,8 +858,8 @@ def _on_grid(value: float, grid: float) -> bool:
 
 
 def _pins_on_grid(layout: Layout) -> bool:
-    """Is every jig pin centre of the sheet on the ``hole_grid`` raster?"""
-    grid = layout.params.hole_grid
+    """Is every jig pin centre of the sheet on the datum's raster?"""
+    grid = _grid_of(layout.params)
     if grid <= 0.0:
         return True
     return all(_on_grid(value, grid)
@@ -825,7 +867,7 @@ def _pins_on_grid(layout: Layout) -> bool:
 
 
 def _grid_waste(layout: Layout) -> float:
-    """Extra cell area (mm2) the hole grid costs, against plain ``board + gap``."""
+    """Extra cell area (mm2) the datum costs, against plain ``board + gap``."""
     gap = layout.params.gap
     waste = 0.0
     for area in layout.areas:
@@ -848,10 +890,10 @@ def layout_report(layout: Layout, config: Config) -> str:
                  f"{'FITS' if layout.fits else 'DOES NOT FIT'}")
     spilled = layout.overflow
     heuristic = layout.heuristic or "unknown"
-    # Cells grow for the hole grid and for the slot padding, so gap/2 is then
+    # Cells grow for the slot raster and for the hole grid, so gap/2 is then
     # only the *minimum* padding.
     floor_pad = max(params.pad, params.min_pad_for_slots) if params.slots else params.pad
-    exact_pad = params.hole_grid <= 0.0 and not params.slots
+    exact_pad = _grid_of(params) <= 0.0 and not params.slots
     padding = (f"padding {floor_pad:.1f} mm" if exact_pad
                else f"padding ≥ {floor_pad:.2f} mm")
     lines.append(f"Cells:   {len(layout.areas) - spilled} placed with MaxRects "
@@ -859,41 +901,49 @@ def layout_report(layout: Layout, config: Config) -> str:
                  f"gap {params.gap:.1f} mm ({padding}), "
                  f"sort by {params.sort}")
     if params.slots:
-        lines.append(f"Datum:   slots: 3 obround slots {params.slot_width:g} x "
-                     f"{params.slot_length:g} mm, outer wall {params.slot_offset:g} mm "
-                     f"inside the cell edge, inner wall {params.slot_inner:g} mm, "
-                     f"pins ⌀{params.pin_dia:g} mm tangent to the inner walls, "
-                     f"push toward the bottom-left corner")
-        lines.append(f"         two on the bottom edge, {params.slot_corner:g} mm from the "
-                     f"cell corners, one on the left edge at mid height; every slot "
-                     f"lies inside its own cell, ≥ {params.slot_web:g} mm of foil to the board")
+        counts = sorted({_edge_counts(area, params) for area in layout.areas})
+        spread = ", ".join(f"{b}+{l}" for b, l in counts) or "none"
+        lines.append(f"Datum:   slots at a {params.slot_pitch:g} mm raster along the bottom "
+                     f"and left edges, outer wall {params.slot_offset:g} mm inside the "
+                     f"cell edge, inner wall {params.slot_inner:.1f} mm, pins "
+                     f"⌀{params.pin_dia:g} mm tangent to the inner walls on the same "
+                     f"raster, push toward the bottom-left corner")
+        lines.append(f"         {params.slot_width:g} x {params.slot_length:g} mm obround; "
+                     f"every raster position that fits is opened, so a modular jig may "
+                     f"use any of them (bottom+left per cell: {spread})")
+        lines.append(f"         cells are whole multiples of the raster, at least two "
+                     f"slots on the longer edge and one on the shorter; every slot lies "
+                     f"inside its own cell, ≥ {params.slot_web:g} mm of foil to the board")
+        crowded = _crowded(params)
+        if crowded:
+            lines.append(f"         WARNING: {crowded}")
         band = max(params.dot_line_gap / 2.0 + params.dot_dia / 2.0, params.dot_dia)
         if params.slot_offset < band:
-            lines.append(f"         WARNING: the dotted band reaches {band:.2f} mm inside "
-                         f"the cell edge, further than the {params.slot_offset:g} mm slot "
-                         f"offset: the cut runs into the slots")
+            lines.append(f"         the slots clip this cell's own dotted line "
+                         f"({params.dot_line_gap / 2.0:.2f} mm inside the edge) and stop "
+                         f"{params.slot_offset:g} mm short of the neighbouring cell: "
+                         f"intended, it frees the foil beside the board for the squeegee")
     elif params.holes:
         lines.append(f"Datum:   holes: ⌀{params.hole_dia:.1f} mm, inset {params.hole_inset:.1f} mm "
                      f"(centres {params.hole_offset:.2f} mm inside the cell edge)")
     else:
         lines.append("Datum:   none")
-    if params.hole_grid > 0.0 and params.datum != DATUM_NONE:
+    raster = _grid_of(params)
+    if raster > 0.0:
         count = sum(len(area.pins) for area in layout.areas)
         verdict = "yes" if _pins_on_grid(layout) else "NO"
-        lines.append(f"Grid:    pin centres on a {params.hole_grid:.1f} mm grid: "
+        source = "slot_pitch" if params.slots else "hole_grid"
+        lines.append(f"Grid:    pin centres on the {raster:.1f} mm {source} raster: "
                      f"{verdict} ({count} pin(s), measured from the sheet origin)")
-        if params.holes:
-            lines.append(f"         cells grown for the grid: {_grid_waste(layout):,.1f} mm2 "
-                         f"more than board + gap (the least this grid allows)")
-        else:
-            lines.append("         cells are not grown for the grid: the slot centres "
-                         "move onto it along their edge instead")
-    elif params.hole_grid > 0.0:
-        lines.append(f"Grid:    off ({params.hole_grid:.1f} mm set, but the datum "
-                     f"is none: no pins to align)")
+        lines.append(f"         cells grown for the raster: {_grid_waste(layout):,.1f} mm2 "
+                     f"more than board + gap (the least this raster allows)")
+        if params.slots and params.hole_grid > 0.0:
+            lines.append(f"         hole_grid ({params.hole_grid:g} mm) is set but applies "
+                         f"to the holes datum only")
+    elif params.datum == DATUM_NONE:
+        lines.append("Grid:    off (datum none: no pins to align)")
     else:
-        lines.append("Grid:    off"
-                     + ("" if params.slots else " (cells are exactly board + gap)"))
+        lines.append("Grid:    off (cells are exactly board + gap)")
 
     for index, area in enumerate(layout.areas, start=1):
         side = area.side
@@ -912,8 +962,10 @@ def layout_report(layout: Layout, config: Config) -> str:
                     else "")
             lines.append(f"   datum corner {_fmt_point((dcx, dcy))}"
                          f"   rel {_fmt_point((dcx - bx0, dcy - by0))}{note}")
+            bottom, left = _edge_counts(area, params)
             lines.append(f"   slots ({params.slot_width:g} x {params.slot_length:g} mm "
-                         f"obround), sheet / relative to board corner "
+                         f"obround), {bottom} on the bottom edge + {left} on the left "
+                         f"edge, sheet / relative to board corner "
                          f"{_fmt_point((bx0, by0))}:")
             for sx, sy, sw, sh in area.slots:
                 lines.append(f"     {_fmt_point((sx, sy))} {sw:.2f} x {sh:.2f} mm"
@@ -932,17 +984,18 @@ def layout_report(layout: Layout, config: Config) -> str:
             pin_dia = params.pin_dia if params.slots else params.hole_dia
             lines.append(f"   jig pins (⌀{pin_dia:g} mm), sheet / relative to board "
                          f"corner {_fmt_point((bx0, by0))}:")
-            grid = params.hole_grid
+            grid = _grid_of(params)
             for px, py in area.pins:
                 off = "" if grid <= 0.0 or _on_grid(px, grid) and _on_grid(py, grid) \
-                    else "   OFF GRID (the cell is too small for it)"
+                    else "   OFF THE RASTER (the cell is too small for it)"
                 lines.append(f"     {_fmt_point((px, py))}"
                              f"   rel {_fmt_point((px - bx0, py - by0))}{off}")
         if params.slots:
             board = ("+x and -y in board coordinates, the board's physical bottom-right"
                      if side.mirror else "-x and -y in board coordinates")
             lines.append(f"   nesting: push toward the datum corner, sheet -x and -y "
-                         f"({board}); first -y, both bottom pins, then -x")
+                         f"({board}); first -y onto the bottom pins, then -x onto "
+                         f"the left one(s)")
 
         candidates = side.candidates
         states = {state: 0 for state in (STATE_OPEN, STATE_IGNORE, STATE_UNDEFINED)}

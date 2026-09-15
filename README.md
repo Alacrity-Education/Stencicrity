@@ -55,7 +55,9 @@ stencicrity.py` works as well.
 Every enabled side becomes a *cell*: the board's bounding box plus at least
 half the spacing on each of its four sides, so two neighbouring boards end up
 at least `spacing` (default 30 mm) apart — exactly that unless the cell has to
-grow, which only the alignment features below ever ask for. Cells are not
+grow, which only the alignment features below ever ask for (with the default
+`slots` datum every cell is rounded up to a whole number of 30 mm raster
+steps, so they always do). Cells are not
 rotated. They are placed with a MaxRects bin packer; three heuristics
 (bottom-left, best short side fit, best area fit) are tried and the one that
 places the most cells in the smallest block wins. The block is then
@@ -94,43 +96,53 @@ Every cell carries the *datum* the jig locates the cut-out piece by. `datum`
 picks which one: `slots` (the default), `holes` (the older, simpler one) or
 `none`.
 
-**`slots`.** Three obround slots of `slot_width` x `slot_length`
-(4.5 x 12 mm) per cell: two along the bottom edge, `slot_corner` (8 mm) from
-the two bottom corners, and one along the left edge at mid height. Their outer
-wall is `slot_offset` (2.25 mm) inside the cell edge and the inner wall
-`slot_offset + slot_width` (6.75 mm), so a slot lies completely inside its own
-cell padding — it never crosses into a neighbouring cell and never touches the
-scissor zone, the band inside the cell edge where the dotted line runs and the
-cut goes. Between a slot and the board there is always at least `slot_web`
-(3 mm) of foil; a cell whose padding cannot host a slot and that web is grown
-until it can (the board stays centred), which is the only reason a cell grows
-for the slots datum.
+**`slots`.** Obround slots of `slot_width` x `slot_length` (4.5 x 12 mm) at
+every position of the `slot_pitch` (30 mm) raster — the raster of a modular pin
+jig — along the cell's **bottom edge** and along its **left edge**; the top and
+right edges get none. *All* the slots that fit are opened, so a jig with pins
+on that raster can locate the piece with whichever of them suit it. A cell is
+sized to a whole number of pitches on both axes and its corners sit on the
+raster, so one raster runs across the whole sheet: an edge of `n` pitches
+carries `n - 1` slots (60 mm one, 90 mm two, 120 mm three) and a cell is grown
+until its longer edge has two and its shorter one has one — the 2 + 1 an exact
+location needs.
 
-The jig is a plate with three `pin_dia` (3 mm) pins. The piece is dropped over
-them so the pins come up through the slots, then pushed toward its bottom-left
-corner — its *datum corner* — until the slot wall nearest the board touches its
-pin. That is three contacts: the two bottom pins fix y and rotation, the left
-one fixes x. Because a bottom side is placed mirrored, its datum corner is the
-board's physical bottom-right; the report says so per cell.
+A slot's outer wall is `slot_offset` (0.5 mm) inside the cell edge, so it
+**clips the cell's own dotted line** (which runs 1.25 mm inside the edge) but
+never reaches into the neighbouring cell: cells touch, their two dotted lines
+stay `dot_line_gap` (2.5 mm) apart, and the dots that fall inside a slot are
+simply dropped. Pushing the slots that far out frees the foil next to the
+board for the squeegee. The inner wall is `slot_offset + slot_width` (5 mm)
+inside the edge and there is always at least `slot_web` (3 mm) of foil between
+a slot and the board; the cell padding therefore has a floor of 8 mm before the
+rounding to whole pitches.
+
+The jig is a plate with `pin_dia` (3 mm) pins on the same raster. The piece is
+dropped over them so the pins come up through the slots, then pushed toward its
+bottom-left corner — its *datum corner* — until the slot wall nearest the board
+touches its pin. Two pins on one edge fix that axis and the rotation, one on
+the other edge fixes the second axis: three contacts, exactly constrained.
+Because a bottom side is placed mirrored, its datum corner is the board's
+physical bottom-right; the report says so per cell.
 
 **`holes`.** Four round dowel-pin holes (`hole_dia` 5 mm) inside the cell
 corners, `hole_inset` (2 mm) from the cell edge to the hole edge; a negative inset moves the hole onto the edge, and
 two cells that would share a hole get one. Simple, but over-constrained: four
 pins in four holes only fit with clearance, so the piece can still shift.
 
-**The grid.** With `hole_grid` set (default 8 mm) every jig pin centre on the
-sheet lies on one common grid of that pitch, measured from the sheet origin —
-for a fixture plate with pins on an 8 mm raster that takes every cut-out piece
-without adjustment. The packer only puts cell corners where the pins land on
-the grid, and the block is centred by a whole number of pitches, so cells do
-not always touch; the slivers between them are free space. The two datums reach
-the grid differently: with `holes` each cell is grown until its hole-to-hole
-distance is a multiple of the pitch (the board stays centred, so the padding
-grows past half the spacing); with `slots` **the cells do not grow at all** —
-each slot centre simply slides along its own edge onto the nearest grid point
-inside the cell. The report says whether every pin is on the grid and, for
-`holes`, how much cell area the grid cost. `hole_grid = 0` switches the grid
-off, `datum = none` cuts no alignment features at all.
+**The raster.** Both datums put every jig pin centre of the sheet on one
+common raster measured from the sheet origin, so a fixture plate with pins on
+it takes every cut-out piece without adjustment. The packer only puts cell
+corners where the pins land on the raster, and the block is centred by a whole
+number of pitches. `slots` uses `slot_pitch` (30 mm) and cells that are whole
+multiples of it, so neighbouring cells still touch exactly. `holes` uses
+`hole_grid` (8 mm), which applies to **that datum only**: each cell is grown
+until its hole-to-hole distance is a multiple of the pitch (the board stays
+centred, so the padding grows past half the spacing), and cells then no longer
+have to touch — the slivers between them are free space. The report says
+whether every pin is on the raster and how much cell area it cost.
+`hole_grid = 0` switches the hole grid off, `datum = none` cuts no alignment
+features at all.
 
 ## Deciding pads
 
@@ -182,14 +194,14 @@ hole_dia = 5.0            # mm (holes datum)
 hole_inset = 2.0          # mm from the dotted line to the hole edge (negative = onto the line)
 slot_width = 4.5          # mm across the cell edge (slots datum)
 slot_length = 12.0        # mm along the cell edge (slots datum)
-slot_offset = 2.25        # mm from the cell edge to the slot's outer wall
-slot_corner = 8.0         # mm from the cell corner to the two bottom slot centres
+slot_offset = 0.5         # mm from the cell edge to the slot's outer wall; may clip the dotted line, never the neighbour
+slot_pitch = 30.0         # mm, raster of the modular jig: slot centres along the bottom and left edges and pin centres lie on it; cells grow to multiples of it
 slot_web = 3.0            # mm of foil kept between a slot and the board; cells grow to hold it
 pin_dia = 3.0             # mm jig pin through a slot (the holes datum uses hole_dia)
 dot_dia = 0.5             # mm
 dot_pitch = 3.0           # mm
 dot_line_gap = 2.5        # each cell's dotted line runs this/2 inside its edge; touching cells show two lines this far apart, cut between them (0 = on the edge)
-hole_grid = 8.0           # pin centres (holes or slots) snap to this grid, 0 = off
+hole_grid = 8.0           # holes datum: hole centres snap to this grid, 0 = off
 outer_border = off        # also dot the cell edges on the outer boundary of the block
 sort = height             # height (tallest boards first) | name
 
@@ -230,7 +242,7 @@ footer lists the keys of the current page.
 | Pads | the candidates of the enabled sides: state, reference and pin, project, side, aperture function, shape, position; `*` adds the pasted pads (dimmed, marked with a `·`) so they can be closed |
 | Sides | switch board sides on and off; each row shows size, paste count and pads to decide |
 | Stencil | pick the sheet size; every row shows whether the block fits in landscape and in portrait |
-| Layout | spacing, the datum (`slots`/`holes`/`none`), hole diameter and inset, the six slot numbers, dot diameter and pitch, dotted line gap, pin grid, outer border, sort order; the rows of the datum that is not selected are dimmed but stay editable |
+| Layout | spacing, the datum (`slots`/`holes`/`none`), hole diameter and inset, the six slot numbers (width, length, offset, pitch, web, pin diameter), dot diameter and pitch, dotted line gap, hole grid, outer border, sort order; the rows of the datum that is not selected are dimmed but stay editable |
 
 | key | action |
 | --- | --- |
@@ -241,7 +253,7 @@ footer lists the keys of the current page.
 | `n` / `N` | Pads: next / previous undefined pad |
 | `*` | Pads: show all pads, including the ones with paste |
 | `A` / `N` | Sides: all on / all off |
-| `+` / `-` (also `→` / `←`) | Layout: step a number by 0.5 mm (1 mm for the pin grid), or cycle the datum |
+| `+` / `-` (also `→` / `←`) | Layout: step a number by 0.5 mm (1 mm for the hole grid, 5 mm for the slot pitch), or cycle the datum |
 | `e` or `Enter` | Layout: type a value (typing replaces, Backspace edits, Enter accepts, Esc cancels); on the datum row it cycles |
 | `p` / `v` | re-render the preview / re-render and open it |
 | `Enter` on Pads, `g` elsewhere | generate; asks a second time when the layout does not fit |
@@ -270,7 +282,7 @@ Everything goes to `--out` (default `./stencil-out`), prefixed with `--name`
 | `stencil-Edge_Cuts.gbr` | the sheet rectangle as a 0.1 mm outline, only with `--outline` |
 | `stencil.zip` | the gerbers above; this is what we upload |
 | `stencil-preview.png` | the preview |
-| `stencil-report.txt` | sheet and block size, the winning heuristic, a `Datum:` block naming the mode and its numbers, a `Grid:` block saying whether every jig pin is on the grid (and, for `holes`, what the grid cost in cell area), then every cell with its board rectangle, its datum corner, its slot or dowel hole coordinates and its jig pin centres (on the sheet and relative to the board corner) plus the direction to push it, pad counts, dot count, file list |
+| `stencil-report.txt` | sheet and block size, the winning heuristic, a `Datum:` block naming the mode and its numbers (for `slots`: the raster, the walls, the slot count per edge), a `Grid:` block saying whether every jig pin is on the raster — `slot_pitch` for the slots, `hole_grid` for the holes — and what it cost in cell area, then every cell with its board rectangle, its datum corner, all its slot or dowel hole coordinates and its jig pin centres (on the sheet and relative to the board corner) plus the direction to push it, pad counts, dot count, file list |
 
 The gerbers are RS-274X with X2 attributes in the format KiCad writes
 (`FSLAX46Y46`, `MOMM`). The preview shows the whole sheet on a dark background
@@ -280,9 +292,10 @@ under every dotted line, a label in every cell and a legend underneath:
 ![Preview of the example sheet](docs/figures/example-preview.png)
 
 The picture above is the preview of the eight example boards this tool was
-developed with, on the default 380 x 280 sheet with the slots datum: twelve
-cells, one dotted line just inside each cell edge (so touching cells show two
-of them and the cut goes between), three alignment slots per cell with the jig
+developed with, on a 420 x 320 sheet (the smallest of the presets that holds
+them with the 30 mm slot raster) with the slots datum: twelve cells grown to
+30 mm multiples, their dotted borders 2.5 mm apart where cells touch, the
+alignment slots along the bottom and left edge of every cell with the jig
 pins drawn as dashed outlines, and the datum corner of each cell marked.
 
 | colour | meaning |
@@ -307,7 +320,7 @@ pins drawn as dashed outlines, and the datum corner of each cell marked.
   `--dot-line-gap MM`, `--sort name` and the other layout numbers; all of them
   are saved into the `.stencicrity` file.
 - `--datum slots|holes|none` - which alignment features every cell gets, with
-  `--slot-width MM`, `--slot-length MM`, `--slot-offset MM`, `--slot-corner MM`,
+  `--slot-width MM`, `--slot-length MM`, `--slot-offset MM`, `--slot-pitch MM`,
   `--slot-web MM` and `--pin-dia MM` for the slots and `--hole-dia MM` /
   `--hole-inset MM` for the holes. `--holes` and `--no-holes` are the legacy
   spellings of `--datum holes` and `--datum none`; an old `.stencicrity` with a

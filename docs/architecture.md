@@ -3,7 +3,7 @@
 Stencicrity reads the gerber exports of several KiCad projects, places every
 board side on one stencil sheet of an orderable size, copies the solder-paste
 openings over, marks each cell with dotted cut lines and the alignment datum
-(three obround slots by default, four dowel-pin holes for the legacy jig), asks
+(by default obround slots on a 30 mm raster along the bottom and left edges of every cell, or four dowel-pin holes for the legacy jig), asks
 the user what to do with the copper pads the paste layer does not cover, and
 writes a single `F_Paste` gerber (plus a copper reference layer, a zip, a
 preview PNG and a text report). Everything the user decides is stored in a

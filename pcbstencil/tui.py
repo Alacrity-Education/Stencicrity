@@ -13,9 +13,10 @@ Pages (tabs in the header, switched with ``1``-``4`` or Tab / Shift-Tab):
    fits / does not fit verdict for every preset.
 4. **Layout** - the layout parameters: gap, the ``datum`` (which alignment
    features every cell gets: ``slots``, ``holes`` or ``none``), the numbers of
-   both datums and their pin grid, divider dots and the gap between the two
-   dotted lines, outer border, cell order.  The rows of the datum that is not
-   selected are drawn dimmed but stay editable.
+   both datums - the modular jig raster of the slots, the hole grid of the
+   holes - divider dots and the gap between the two dotted lines, outer
+   border, cell order.  The rows of the datum that is not selected are drawn
+   dimmed but stay editable.
 
 On the two list pages (Pads and Sides) ``/`` starts a vim like search: every
 printable character is appended to the query and the list is filtered while
@@ -610,14 +611,16 @@ LAYOUT_FIELDS: tuple[Field, ...] = (
     Field("slot_length", "slot length", "length", "mm", 0.5, 0.1, "gt0"),
     Field("slot_offset", "slot offset (edge to outer wall)", "length", "mm",
           0.5, 0.0, "ge0"),
-    Field("slot_corner", "slot corner distance", "length", "mm", 0.5, 0.1, "gt0"),
+    Field("slot_pitch", "slot pitch (modular jig raster)", "length", "mm",
+          5.0, 1.0, "gt0"),
     Field("slot_web", "slot web (to board)", "length", "mm", 0.5, 0.1, "gt0"),
     Field("pin_dia", "pin diameter", "length", "mm", 0.5, 0.1, "gt0"),
     Field("dot_dia", "dot diameter", "length", "mm", 0.5, 0.1, "gt0"),
     Field("dot_pitch", "dot pitch", "length", "mm", 0.5, 0.1, "gt0"),
     Field("dot_line_gap", "dotted line gap (between touching cells)", "length", "mm",
           0.5, 0.0, "ge0"),
-    Field("hole_grid", "pin grid (0 = off)", "length", "mm", 1.0, 0.0, "ge0"),
+    Field("hole_grid", "hole grid (holes datum, 0 = off)", "length", "mm",
+          1.0, 0.0, "ge0"),
     Field("outer_border", "outer border", "bool"),
     Field("sort", "sort", "choice", choices=tuple(SORT_ORDERS)),
 )
@@ -630,7 +633,7 @@ DATUM_ROWS: dict[str, str] = {
     "slot_width": DATUM_SLOTS,
     "slot_length": DATUM_SLOTS,
     "slot_offset": DATUM_SLOTS,
-    "slot_corner": DATUM_SLOTS,
+    "slot_pitch": DATUM_SLOTS,
     "slot_web": DATUM_SLOTS,
     "pin_dia": DATUM_SLOTS,
 }

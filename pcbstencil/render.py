@@ -10,8 +10,9 @@ gerber objects.
 Cells can sit anywhere on the sheet (they are packed with MaxRects, see
 :mod:`pcbstencil.layout`); the only cell markings drawn are a faint dashed guide
 under every dotted line (one per cell edge, ``dot_line_gap/2`` inside the cell) and,
-when ``hole_grid`` is on, a very faint grid of that pitch over the whole sheet,
-so the jig pins can be seen sitting on its intersections.  Cells that did not
+when the datum rides on a raster (``slot_pitch`` for the slots, ``hole_grid``
+for the holes), a very faint grid of that pitch over the whole sheet, so the
+jig pins can be seen sitting on its intersections.  Cells that did not
 fit are drawn outside the stencil boundary - the image simply grows to cover
 them.
 
@@ -49,7 +50,7 @@ __all__ = ["render_preview", "open_file"]
 BACKGROUND = "#141414"
 COLOR_SHEET = "#8a8a8a"          # the stencil boundary
 COLOR_GUIDE = "#333333"          # faint dashed line under the divider dots
-COLOR_GRID = "#202020"           # even fainter: the dowel hole grid
+COLOR_GRID = "#202020"           # even fainter: the jig pin raster
 COLOR_COPPER = "#2e2e2e"
 COLOR_PAD = "#5a5a5a"
 COLOR_OUTLINE = "#c8c8c8"
@@ -567,7 +568,7 @@ def render_preview(layout: Layout, path: str, *, px_per_mm: float = 20.0, max_px
 
     # 0. The dowel hole grid, under everything else: every hole centre sits on
     #    one of its intersections.
-    _draw_hole_grid(draw, layout, to_px, ppmm)
+    _draw_pin_raster(draw, layout, to_px, ppmm)
 
     # 1. A very faint dashed guide under every dotted line (the dots are the
     #    real marking; there are two lines per cell edge); no rectangles.
@@ -710,16 +711,20 @@ def render_preview(layout: Layout, path: str, *, px_per_mm: float = 20.0, max_px
     return path
 
 
-def _draw_hole_grid(draw: ImageDraw.ImageDraw, layout: Layout,
-                    to_px: Callable[[float, float], tuple[float, float]],
-                    ppmm: float) -> None:
-    """One hairline per ``hole_grid`` multiple over the sheet (nothing when off).
+def _draw_pin_raster(draw: ImageDraw.ImageDraw, layout: Layout,
+                     to_px: Callable[[float, float], tuple[float, float]],
+                     ppmm: float) -> None:
+    """One hairline per raster pitch over the sheet (nothing when there is none).
 
-    The grid is measured from the sheet origin, exactly like the jig pins, so
-    every pin has to sit on a crossing.  It is skipped when the lines would
-    be closer than two pixels - at that scale it is noise, not information.
+    The raster is ``slot_pitch`` for the slots datum and ``hole_grid`` for the
+    holes datum; it is measured from the sheet origin, exactly like the jig
+    pins, so every pin has to sit on a crossing.  It is skipped when the lines
+    would be closer than two pixels - at that scale it is noise, not
+    information.
     """
-    grid = layout.params.hole_grid
+    params = layout.params
+    grid = (params.slot_pitch if params.slots
+            else params.hole_grid if params.holes else 0.0)
     if grid <= 0.0 or grid * ppmm < 2.0:
         return
     for i in range(int(math.floor(layout.width / grid)) + 1):

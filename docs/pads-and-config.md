@@ -128,8 +128,8 @@ hole_dia = 5.0
 hole_inset = 2.0
 slot_width = 4.5
 slot_length = 12.0
-slot_offset = 2.25
-slot_corner = 8.0
+slot_offset = 0.5
+slot_pitch = 30.0
 slot_web = 3.0
 pin_dia = 3.0
 dot_dia = 0.5
@@ -166,13 +166,14 @@ RBARF/bottom/TP1.1@148.082,-99.568 = ignore   # SMDPad C ⌀1.00
 | | `slot_width` | float > 0 | `slot_width` |
 | | `slot_length` | float > 0 | `slot_length` |
 | | `slot_offset` | float >= 0 | `slot_offset` |
-| | `slot_corner` | float > 0 | `slot_corner` |
+| | `slot_pitch` | float > 0 | `slot_pitch` (the modular jig raster) |
+| | `slot_corner` | float, **obsolete** | read and dropped in silence |
 | | `slot_web` | float > 0 | `slot_web` |
 | | `pin_dia` | float > 0 | `pin_dia` |
 | | `dot_dia` | float > 0 | `dot_dia` |
 | | `dot_pitch` | float > 0 | `dot_pitch` |
 | | `dot_line_gap` | float >= 0 | `dot_line_gap` |
-| | `hole_grid` | float >= 0 | `hole_grid` (pin centres of either datum) |
+| | `hole_grid` | float >= 0 | `hole_grid` (`holes` datum only) |
 | | `outer_border` (alias `border`) | bool | `outer_border` |
 | | `sort` | `height` \| `name` | `sort` |
 | `[rules]` | `ignore_prefixes` | prefixes separated by commas or spaces | `Config.ignore_prefixes` |
@@ -199,6 +200,15 @@ so the "`datum` wins" rule works whichever order the two lines come in: reading
 `datum` records it, and the `holes` branch only assigns when `datum` is not in
 that set. A `holes` value that is not a boolean warns and changes nothing. The
 mapping is one-way - once the file is written back, only `datum` is in it.
+
+### Obsolete keys
+
+`_OBSOLETE_LAYOUT_KEYS` lists `[layout]` keys that the program once wrote and
+no longer uses. They are recognised and dropped **without a warning**, unlike a
+key that is simply unknown. There is one entry, `slot_corner`: it placed the
+two bottom slots before they moved onto the `slot_pitch` raster, so an older
+`.stencicrity` still loads silently and loses the key the next time it is
+written.
 
 ### Parsing rules
 

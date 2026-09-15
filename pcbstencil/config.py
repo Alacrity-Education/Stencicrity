@@ -14,7 +14,7 @@ the TUI exits and is meant to be readable and editable by hand::
     [layout]
     spacing = 30.0
     datum = slots
-    hole_grid = 8.0
+    slot_pitch = 30.0
     ...
 
     [rules]
@@ -92,7 +92,7 @@ _LAYOUT_FLOATS: dict[str, tuple[str, Optional[Callable[[float], bool]], str]] = 
     "slot_width": ("slot_width", lambda v: v > 0.0, "must be positive"),
     "slot_length": ("slot_length", lambda v: v > 0.0, "must be positive"),
     "slot_offset": ("slot_offset", lambda v: v >= 0.0, "must not be negative"),
-    "slot_corner": ("slot_corner", lambda v: v > 0.0, "must be positive"),
+    "slot_pitch": ("slot_pitch", lambda v: v > 0.0, "must be positive"),
     "slot_web": ("slot_web", lambda v: v > 0.0, "must be positive"),
     "pin_dia": ("pin_dia", lambda v: v > 0.0, "must be positive"),
     "dot_dia": ("dot_dia", lambda v: v > 0.0, "must be positive"),
@@ -102,6 +102,10 @@ _LAYOUT_FLOATS: dict[str, tuple[str, Optional[Callable[[float], bool]], str]] = 
 }
 #: ``[layout]`` key -> LayoutParams attribute (booleans).
 _LAYOUT_BOOLS = {"outer_border": "outer_border"}
+#: Keys of older files that no longer mean anything; read and dropped in
+#: silence (``slot_corner`` placed the slots before they moved onto the
+#: ``slot_pitch`` raster).
+_OBSOLETE_LAYOUT_KEYS = frozenset({"slot_corner"})
 #: The pre-``datum`` ``holes = on | off`` switch, mapped onto its successor.
 _LEGACY_HOLES_DATUM = {True: DATUM_HOLES, False: DATUM_NONE}
 #: Accepted spellings of a ``[layout]`` key.
@@ -272,6 +276,8 @@ def _read_layout(config: Config, key: str, value: str, where: str,
                  f"using {_bool_text(getattr(params, attr))}")
             return
         setattr(params, attr, flag)
+    elif key in _OBSOLETE_LAYOUT_KEYS:
+        return                          # known, but nothing uses it any more
     elif key == "sort":
         text = value.lower()
         if text not in SORT_ORDERS:
@@ -423,9 +429,12 @@ def format_config(config: Config, projects: list[Project]) -> str:
         _entry("slot_length", _num_text(params.slot_length),
                "mm along the cell edge (slots datum)"),
         _entry("slot_offset", _num_text(params.slot_offset),
-               "mm from the cell edge to the slot's outer wall"),
-        _entry("slot_corner", _num_text(params.slot_corner),
-               "mm from the cell corner to the two bottom slot centres"),
+               "mm from the cell edge to the slot's outer wall; may clip the "
+               "dotted line, never the neighbour"),
+        _entry("slot_pitch", _num_text(params.slot_pitch),
+               "mm, raster of the modular jig: slot centres along the bottom "
+               "and left edges and pin centres lie on it; cells grow to "
+               "multiples of it"),
         _entry("slot_web", _num_text(params.slot_web),
                "mm of foil kept between a slot and the board; cells grow to hold it"),
         _entry("pin_dia", _num_text(params.pin_dia),
@@ -437,7 +446,7 @@ def format_config(config: Config, projects: list[Project]) -> str:
                "cells show two lines this far apart, cut between them "
                "(0 = on the edge)"),
         _entry("hole_grid", _num_text(params.hole_grid),
-               "pin centres (holes or slots) snap to this grid, 0 = off"),
+               "holes datum: hole centres snap to this grid, 0 = off"),
         _entry("outer_border", _bool_text(params.outer_border),
                "also dot the cell edges on the outer boundary of the block"),
         _entry("sort", params.sort, "height (tallest boards first) | name"),

@@ -25,8 +25,9 @@ file to the desktop viewer.
    `frame.to_px`. Several line widths are derived from
    `scale = ppmm / _REFERENCE_PPMM`: `thin` (1 px at 20 px/mm), `outline_w`
    (min 2), `select_w` (min 3), and the dash/space lengths of the guides.
-3. **Pin grid.** `_draw_hole_grid` paints one hairline per `hole_grid`
-   multiple, under everything else.
+3. **Pin raster.** `_draw_pin_raster` paints one hairline per raster pitch —
+   `slot_pitch` under the `slots` datum, `hole_grid` under `holes`, nothing
+   under `none` — under everything else.
 4. **Divider guides.** A faint dashed line (`COLOR_GUIDE`) under every entry of
    `layout.dividers` — one per cell edge, `dot_line_gap / 2` inside it, so two
    touching cells show two of them with the cut between. The dots themselves
@@ -48,7 +49,9 @@ file to the desktop viewer.
 6a. **The jig.** `_draw_datum` draws, on top of the openings, one dashed blue
    ghost circle (`COLOR_PIN`) per entry of `area.pins` — where the fixture pin
    comes up through the foil, through a slot or through a dowel hole, for
-   either datum, `pin_dia` wide for `slots` and `hole_dia` for `holes`. Under
+   either datum, `pin_dia` wide for `slots` and `hole_dia` for `holes`; under
+   `slots` there is one per slot, and every one of them sits on a crossing of
+   the raster hairlines. Under
    the `slots` datum each cell additionally gets an orange `COLOR_DATUM`
    bracket at its `datum_corner` (two legs of at most `_DATUM_LEG_MM` = 4 mm,
    shortened on a small cell) and a short green `COLOR_NEST` arrow running down
@@ -191,7 +194,7 @@ The remaining colours are drawn as lines or text rather than through masks:
 | `BACKGROUND` | `#141414` | the image ground |
 | `COLOR_SHEET` | `#8a8a8a` | the stencil boundary rectangle |
 | `COLOR_GUIDE` | `#333333` | dashed guide under every divider line |
-| `COLOR_GRID` | `#202020` | the jig pin grid hairlines |
+| `COLOR_GRID` | `#202020` | the jig pin raster hairlines |
 | `COLOR_PIN` | `#4aa3ff` | dashed ghost circle of a jig pin (`_dashed_circle`: 22° dashes, a plain ring below 3 px radius) |
 | `COLOR_DATUM` | `#ff9a1f` | the bracket at the corner the piece is pushed into (`slots`) |
 | `COLOR_NEST` | `#39d98a` | the arrow showing the nesting direction (`slots`) |
@@ -222,8 +225,8 @@ Where they are used:
   cell edge and stopping `right_span + 1.0` mm before the right one, so it
   never runs into a datum feature. The two spans depend on the datum: for
   `holes` both are `hole_offset + hole_dia/2` (clear of the two top holes), for
-  `slots` `left_span = slot_inner` and `right_span = 0` (the bottom slots are
-  low and the left slot is at mid height, so only the left edge is in the way),
+  `slots` `left_span = slot_inner` and `right_span = 0` (slots only sit along
+  the bottom and the left edge, so only the left one reaches the label row),
   and for `none` both are 0.
 - **Component box** — the reference, drawn with `ref_font`
   (`max(11, round(1.1 * ppmm))`) above the top-left corner of the box.
@@ -234,7 +237,7 @@ Where they are used:
   `   —  DOES NOT FIT` tail is measured separately and drawn in `COLOR_OPEN`
   right after the fitted legend text.
 
-## Rulers and the pin grid
+## Rulers and the pin raster
 
 `_draw_rulers` paints the two band rectangles over the already drawn content
 (leaving the row and column of the stencil boundary itself untouched), then
@@ -245,11 +248,12 @@ drawn only on multiples of `label_step`, clamped so they stay inside the image,
 and skipped when they would come within `0.35 * font_px` of the previous one.
 The bottom ruler carries X, the left ruler Y, and the Y numbers grow upwards.
 
-`_draw_hole_grid` draws one hairline per `hole_grid` multiple across the sheet,
+`_draw_pin_raster` draws one hairline per raster pitch across the sheet,
 measured from the sheet origin exactly like the jig pins, so every blue ghost
-circle has to sit on a crossing — it is the visual check for the grid, and it
-works the same for both datums. It returns immediately when `hole_grid <= 0` or
-when the lines would be closer than two pixels.
+circle has to sit on a crossing — it is the visual check for the raster. The
+pitch is `slot_pitch` under the `slots` datum and `hole_grid` under `holes`
+(`hole_grid` has no effect on the slots any more). It returns immediately when
+there is no raster or when the lines would be closer than two pixels.
 
 ## `open_file`
 
