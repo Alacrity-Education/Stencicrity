@@ -355,6 +355,13 @@ has the newer Shapely in backports; use `pip` or `uv` there.
   number; their keys in the `.stencicrity` file are less stable.
 - No Windows support yet, possibly never. This is due to hard dependency on ncurses. 
 
+## Documentation
+
+[`docs/README.md`](docs/README.md) indexes the developer documentation: the
+architecture and the data model, the gerber reader and writer, the packer, the
+configuration file, the TUI and the preview renderer, plus how to develop,
+package and release the tool.
+
 ## License
 
 Stencicrity is released under the GNU Affero General Public License,
