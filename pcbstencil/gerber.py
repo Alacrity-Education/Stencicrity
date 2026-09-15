@@ -645,8 +645,11 @@ class GerberParser:
         elif code == "SR":
             if re.search(r"X([2-9]|\d\d)|Y([2-9]|\d\d)", cmd):
                 raise GerberError("step and repeat (SR) is not supported")
-        elif code in ("OF", "SF", "MI", "AS"):
-            if re.search(r"[AB]-?0*[1-9]|[AB]0*\.0*[1-9]", cmd) and code in ("OF", "SF", "MI"):
+        elif code == "AS":
+            if cmd[2:].strip() not in ("", "AXBY"):
+                raise GerberError(f"axis select {cmd!r} is not supported")
+        elif code in ("OF", "SF", "MI"):
+            if re.search(r"[AB]-?0*[1-9]|[AB]0*\.0*[1-9]", cmd):
                 raise GerberError(f"deprecated transformation {cmd!r} is not supported")
         # IP, IN, LN, IJ, IR ... are ignored
 

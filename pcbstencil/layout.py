@@ -379,11 +379,8 @@ def pack(sides: list[Side], config: Config) -> Layout:
     dividers = _dividers(areas, params.outer_border, params.dot_line_gap)
     dots = _dots(dividers, params)
     layout = Layout(params=params, areas=areas, width=sheet_w, height=sheet_h,
-                    block=block, fits=fits, dots=dots, dividers=dividers)
-    # Extra, informational attributes used by layout_report() (Layout has no
-    # field for them; every consumer reads them with getattr).
-    layout.heuristic = heuristic
-    layout.overflow = len(overflow)
+                    block=block, fits=fits, dots=dots, dividers=dividers,
+                    heuristic=heuristic, overflow=len(overflow))
     return layout
 
 

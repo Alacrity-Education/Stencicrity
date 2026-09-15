@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from . import __version__
 from .gerber import (
     BakedAperture,
     Flash,
@@ -40,7 +41,7 @@ class GerberWriter:
     """Builds one Gerber file from graphic objects and simple primitives."""
 
     def __init__(self, file_function: str, *, polarity: str = "Positive",
-                 software: str = "pcbstencil", version: str = "0.1.0") -> None:
+                 software: str = "stencicrity", version: str = __version__) -> None:
         """Create a writer for a layer with the given ``%TF.FileFunction``."""
         self.file_function = file_function
         self.polarity = polarity
@@ -253,7 +254,7 @@ class GerberWriter:
             f"%TF.FilePolarity,{self.polarity}*%",
             "%FSLAX46Y46*%",
             "G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*",
-            f"G04 Created by pcbstencil {self.version}*",
+            f"G04 Created by {self.software} {self.version}*",
             "%MOMM*%",
             "%LPD*%",
             "G01*",

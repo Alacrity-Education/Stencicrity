@@ -202,19 +202,6 @@ declared minimum) nor 3.14 (what development uses) is covered.
 Things found while reading the code. None of them break a normal run; they are
 listed so nobody has to rediscover them.
 
-* **The written gerbers claim version 0.1.0.** `GerberWriter.__init__` defaults
-  to `version="0.1.0"` and no caller passes `pcbstencil.__version__`, so
-  `%TF.GenerationSoftware` and the `G04 Created by pcbstencil …` line say 0.1.0
-  whatever the release is. The same header writes the vendor and the application
-  field both as `pcbstencil` (`pcbstencil,pcbstencil,0.1.0`); X2 expects
-  `<vendor>,<application>,<version>`.
-* **A stale comment in `layout.pack()`.** It says `Layout` has no fields for
-  `heuristic` and `overflow` and that "every consumer reads them with getattr".
-  Both are ordinary dataclass fields with defaults, and `layout_report()` reads
-  them as attributes.
-* **`%AS` is never rejected.** `_ext_cmd()` lists `AS` alongside `OF`, `SF` and
-  `MI`, but the guard inside only tests the latter three, so an axis-select
-  command is silently ignored instead of raising. KiCad does not emit it.
 * **Macro modifiers are not unit-scaled.** `_define_aperture()` scales standard
   aperture modifiers by the current unit but deliberately leaves macro
   parameters alone, because "KiCad only uses mm". A `MOIN` file using macro
