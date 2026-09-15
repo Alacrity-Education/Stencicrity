@@ -28,8 +28,9 @@ file to the desktop viewer.
 3. **Pin grid.** `_draw_hole_grid` paints one hairline per `hole_grid`
    multiple, under everything else.
 4. **Divider guides.** A faint dashed line (`COLOR_GUIDE`) under every entry of
-   `layout.dividers` — there are two per cell edge. The dots themselves are the
-   real marking; no cell rectangles are drawn.
+   `layout.dividers` — one per cell edge, `dot_line_gap / 2` inside it, so two
+   touching cells show two of them with the cut between. The dots themselves
+   are the real marking; no cell rectangles are drawn.
 5. **Class masks.** Five `_ClassMask` instances are filled per area, using
    `area.transform.affine()` as the board-to-sheet matrix: copper objects into
    `copper`, every `side.pads` geometry into `pads`,

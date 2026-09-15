@@ -53,19 +53,23 @@ are *overflow*: they are lined up to the right of the sheet so the user can see
 them, and ``Layout.fits`` is ``False``.  The block of placed cells is centred
 on the stencil.
 
-Every cell edge is a *divider*: it is marked on the stencil by two parallel
-rows of small round openings (the *dots*), ``dot_line_gap`` apart and centred
-on the edge, so the user can see and cut along the border between two boards
-(``dot_line_gap = 0`` gives a single row on the edge itself).  Every cell is
-outlined completely - all four of its edges, whether they are shared with a
-neighbouring cell or face empty space.  Collinear pieces that overlap or touch
-are merged, so a shared edge gives exactly one pair of dotted lines and a long
-straight border is one pair.  The only edges that may be left out are the ones
-on the outer boundary of the block of cells (nothing has to be cut apart
-there): ``outer_border`` dots those too.  :attr:`Layout.dividers` holds the
-dotted lines themselves (both of every pair), not the cell edges.  A dot whose
-centre would fall inside a datum opening (a slot or a dowel hole) is dropped -
-there is no foil left there to guide anything.
+Every cell owns one *divider* along each of its four edges: a sparse row of
+small round openings (the *dots*) running ``dot_line_gap / 2`` *inside* that
+edge, so the user can see and cut the cell out.  The four lines of a cell meet
+at their corners - together they are the cell rectangle inset by
+``dot_line_gap / 2`` - and no line is ever drawn outside a cell.  Where two
+cells touch, their two lines are ``dot_line_gap`` apart and the scissors cut
+between them; where a cell edge faces free space (a packing gap, or a sliver
+left by the hole grid) the cell still has its one line inside the edge and the
+cut goes anywhere outside it.  ``dot_line_gap = 0`` puts every line on the edge
+itself, so two touching cells then share one line.  Collinear pieces on one
+line - two cells stacked along it with the same inset - are merged, so a long
+straight border is one divider with evenly spaced dots.  The only lines that
+may be left out are the ones whose *edge* lies on the outer boundary of the
+block of cells (nothing has to be cut apart there): ``outer_border`` dots those
+too.  :attr:`Layout.dividers` holds the dotted lines themselves, not the cell
+edges.  A dot whose centre would fall inside a datum opening (a slot or a dowel
+hole) is dropped - there is no foil left there to guide anything.
 
 Sheet coordinates have their origin at the bottom left of the stencil, X to the
 right and Y up, in millimetres (see :mod:`pcbstencil.model`).
@@ -627,59 +631,62 @@ def _dividers(areas: list[Area], outer: bool, line_gap: float = 0.0
               ) -> list[tuple[float, float, float, float]]:
     """The dotted lines, as ``(x0, y0, x1, y1)``.
 
-    Every cell is outlined by dividers: all four of its edges, whether they are
-    shared with a neighbouring cell or face the empty space between two
-    stencils - the user cuts every cell out along them, so the whole perimeter
-    has to be marked.  The edge pieces of every cell are collected per line
-    (same orientation, same coordinate within ``_MERGE_EPS``) and the ones that
-    overlap or touch are merged into a single segment, so a shared edge becomes
-    one divider (dotted once) and several cells abutting one long border give
-    one straight divider with evenly spaced dots.
+    Every cell owns one dotted line along each of its four edges, running
+    ``line_gap / 2`` *inside* that edge (a left edge at ``x`` gives a line at
+    ``x + line_gap/2``, a right edge one at ``x - line_gap/2``, and so on).
+    The extent of a line is the extent of its edge shortened by the same
+    ``line_gap / 2`` at both ends, so the four lines of a cell meet at their
+    corners instead of sticking out: together they are exactly the cell
+    rectangle inset by ``line_gap / 2``.  No line is ever drawn outside a cell.
 
-    A cell edge is then *doubled*: instead of one row of dots on the edge
-    itself, two parallel lines ``line_gap`` apart are returned, centred on the
-    edge (a vertical edge at ``x`` gives ``x - line_gap/2`` and
-    ``x + line_gap/2``), both with the extent of the edge.  The cut runs between
-    them.  ``line_gap <= 0`` keeps the single line on the edge.  Lines of
-    different edges that end up on the same coordinate are merged again, so
-    nothing is ever dotted twice.
+    Where two cells touch, their two lines are ``line_gap`` apart and the
+    scissors cut between them; where a cell edge faces free space the cell
+    still has its one line inside the edge and the cut goes anywhere outside
+    it.  ``line_gap <= 0`` puts every line on the edge itself, so two touching
+    cells then share one line.
+
+    A cell thinner than ``line_gap`` cannot hold the inset; it is then clamped
+    to half the cell in that direction, which collapses the two opposite lines
+    onto the cell's centre line and drops the two perpendicular ones (they
+    would have no length left).
+
+    The lines are collected per line (same orientation, same coordinate within
+    ``_MERGE_EPS``) and the pieces that overlap or touch are merged into a
+    single segment, so two cells stacked along one line with the same inset
+    give one straight divider with evenly spaced dots.
 
     ``outer`` (``LayoutParams.outer_border``) only decides what happens on the
     outer boundary of the block, i.e. on the four lines of :attr:`Layout.block`:
     the vertical edges at the left- and rightmost cell edge and the horizontal
     ones at the bottom and top of the block.  There is nothing to cut apart
-    there, so they are dropped unless ``outer`` is set.  Everything inside the
-    block is always dotted.
+    there, so their lines are dropped unless ``outer`` is set.  The test is made
+    on the cell *edge*, not on the position of the line it carries.
     """
-    # Collect the four edges of every cell per line: (orientation, coordinate).
+    minx, miny, maxx, maxy = _block_of(areas)
+    boundary = {_VERTICAL: (minx, maxx), _HORIZONTAL: (miny, maxy)}
+
+    half = max(line_gap, 0.0) / 2.0
     snap = {_VERTICAL: _Snap(_MERGE_EPS), _HORIZONTAL: _Snap(_MERGE_EPS)}
     lines: dict[tuple[int, float], list[tuple[float, float]]] = {}
     for area in areas:
         x0, y0, x1, y1 = area.rect
-        raw = ((_VERTICAL, x0, y0, y1), (_VERTICAL, x1, y0, y1),
-               (_HORIZONTAL, y0, x0, x1), (_HORIZONTAL, y1, x0, x1))
-        for orientation, line, lo, hi in raw:
+        # This cell's own rectangle, inset by line_gap/2 (clamped so it never
+        # turns inside out): the four lines run along its sides.
+        ix, iy = min(half, (x1 - x0) / 2.0), min(half, (y1 - y0) / 2.0)
+        lox, hix, loy, hiy = x0 + ix, x1 - ix, y0 + iy, y1 - iy
+        # (orientation, the cell edge, its line, the extent of that line)
+        raw = ((_VERTICAL, x0, lox, loy, hiy), (_VERTICAL, x1, hix, loy, hiy),
+               (_HORIZONTAL, y0, loy, lox, hix), (_HORIZONTAL, y1, hiy, lox, hix))
+        for orientation, edge, line, lo, hi in raw:
             if hi - lo <= _MERGE_EPS:
-                continue                    # a degenerate cell has no edge here
+                continue                    # no room left for this line
+            if not outer and any(abs(edge - bound) <= _MERGE_EPS
+                                 for bound in boundary[orientation]):
+                continue                    # edge on the outer boundary of the block
             lines.setdefault((orientation, snap[orientation](line)), []).append((lo, hi))
 
-    minx, miny, maxx, maxy = _block_of(areas)
-    boundary = {_VERTICAL: (minx, maxx), _HORIZONTAL: (miny, maxy)}
-
-    # Every surviving edge line becomes one dotted line (line_gap 0) or a pair.
-    offsets = (0.0,) if line_gap <= 0.0 else (-line_gap / 2.0, line_gap / 2.0)
-    shift = {_VERTICAL: _Snap(_MERGE_EPS), _HORIZONTAL: _Snap(_MERGE_EPS)}
-    dotted: dict[tuple[int, float], list[tuple[float, float]]] = {}
-    for (orientation, line), parts in sorted(lines.items()):
-        if not outer and any(abs(line - edge) <= _MERGE_EPS
-                             for edge in boundary[orientation]):
-            continue                        # on the outer boundary of the block
-        for offset in offsets:
-            key = (orientation, shift[orientation](line + offset))
-            dotted.setdefault(key, []).extend(parts)
-
     out: list[tuple[float, float, float, float]] = []
-    for (orientation, line), parts in sorted(dotted.items()):
+    for (orientation, line), parts in sorted(lines.items()):
         for lo, hi in _merge(parts):
             out.append((line, lo, line, hi) if orientation == _VERTICAL
                        else (lo, line, hi, line))
@@ -862,9 +869,9 @@ def layout_report(layout: Layout, config: Config) -> str:
                      f"lies inside its own cell, ≥ {params.slot_web:g} mm of foil to the board")
         band = max(params.dot_line_gap / 2.0 + params.dot_dia / 2.0, params.dot_dia)
         if params.slot_offset < band:
-            lines.append(f"         WARNING: the dotted band is ±{band:.2f} mm around the "
-                         f"cell edge, wider than the {params.slot_offset:g} mm slot offset: "
-                         f"the cut runs into the slots")
+            lines.append(f"         WARNING: the dotted band reaches {band:.2f} mm inside "
+                         f"the cell edge, further than the {params.slot_offset:g} mm slot "
+                         f"offset: the cut runs into the slots")
     elif params.holes:
         lines.append(f"Datum:   holes: ⌀{params.hole_dia:.1f} mm, inset {params.hole_inset:.1f} mm "
                      f"(centres {params.hole_offset:.2f} mm inside the cell edge)")
@@ -949,11 +956,11 @@ def layout_report(layout: Layout, config: Config) -> str:
         lines.append(f"   closed openings: {len(side.closed_pads)}")
 
     lines.append("")
-    doubled = (f"two lines {params.dot_line_gap:.2f} mm apart"
-               if params.dot_line_gap > 0.0 else "one line on the cell edge")
+    inset = (f"{params.dot_line_gap / 2.0:.2f} mm inside the edge"
+             if params.dot_line_gap > 0.0 else "on the edge itself")
     lines.append(f"Divider dots: {len(layout.dots)} "
                  f"(⌀{params.dot_dia:.2f} mm, pitch {params.dot_pitch:.2f} mm, "
-                 f"{len(layout.dividers)} dotted line(s) around every cell, "
-                 f"{doubled}"
+                 f"{len(layout.dividers)} dotted line(s), one per cell edge, "
+                 f"{inset}"
                  f"{', block boundary included' if params.outer_border else ''})")
     return "\n".join(lines)

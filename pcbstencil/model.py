@@ -17,10 +17,10 @@ Every enabled side gets a *cell*: the board bounding box padded by at least
 apart). When ``hole_grid`` is set, cells are enlarged (board kept centred) and
 positioned so that every dowel hole centre lies on one common grid of that
 pitch across the whole sheet. Cells are placed on the stencil sheet with a
-MaxRects bin packer; the sparse dotted border outlines every cell as two
-parallel dotted lines ``dot_line_gap`` apart centred on the cell edge (a
-shared edge is dotted once), except the edges on the outer boundary of the
-whole block, which ``outer_border`` adds.
+MaxRects bin packer; every cell owns one sparse dotted line along each of its
+edges, ``dot_line_gap/2`` inside the edge, so two touching cells show two
+lines ``dot_line_gap`` apart and the scissors cut between them; the lines on
+the outer boundary of the whole block are left out unless ``outer_border``.
 
 Alignment features (``datum``): with ``slots`` every cell gets three obround
 slots that lie completely inside its own cell padding (never touching the
@@ -255,7 +255,7 @@ class LayoutParams:
     # -- dotted border --
     dot_dia: float = 0.5       # divider dot diameter (mm)
     dot_pitch: float = 3.0     # centre-to-centre distance of divider dots (mm)
-    dot_line_gap: float = 2.5  # the dotted border is two parallel lines this far apart, centred on the cell edge (0 = one line)
+    dot_line_gap: float = 2.5  # every cell's own dotted line runs dot_line_gap/2 inside its edge; touching cells thus show two lines this far apart and the cut goes between them (0 = on the edge)
     # -- jig --
     hole_grid: float = 8.0     # pin centres (holes or slots) snap to a grid of this pitch (mm); 0 = off
     outer_border: bool = False # also dot the cell edges on the outer boundary of the block

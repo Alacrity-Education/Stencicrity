@@ -433,7 +433,9 @@ def format_config(config: Config, projects: list[Project]) -> str:
         _entry("dot_dia", _num_text(params.dot_dia), "mm"),
         _entry("dot_pitch", _num_text(params.dot_pitch), "mm"),
         _entry("dot_line_gap", _num_text(params.dot_line_gap),
-               "mm between the two dotted border lines (0 = single line)"),
+               "each cell's dotted line runs this/2 inside its edge; touching "
+               "cells show two lines this far apart, cut between them "
+               "(0 = on the edge)"),
         _entry("hole_grid", _num_text(params.hole_grid),
                "pin centres (holes or slots) snap to this grid, 0 = off"),
         _entry("outer_border", _bool_text(params.outer_border),

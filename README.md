@@ -64,14 +64,17 @@ centred on the sheet. Cells are offered to the packer tallest board first
 always comes right before its bottom.
 
 The border of every cell is marked with dots: openings of `dot_dia` (0.5 mm)
-every `dot_pitch` (3 mm), evenly spaced along each edge. Each edge is marked by
-two parallel dotted lines `dot_line_gap` (2.5 mm) apart, centred on the edge,
-and the cut runs between them; `dot_line_gap = 0` gives a single line on the
-edge itself. A shared edge gives one pair of lines, collinear pieces are merged
-into one straight line, lines of different edges that land on the same
-coordinate are merged again so nothing is dotted twice, and the outer boundary
-of the whole block is left blank because nothing has to be cut apart there
-(`outer_border = on` dots it too).
+every `dot_pitch` (3 mm), evenly spaced along the line. Every cell owns one
+dotted line along each of its four edges, running `dot_line_gap / 2` (1.25 mm)
+*inside* that edge — the four lines are the cell rectangle pulled in by that
+much, and they close at the corners. Two cells that touch therefore show two
+lines `dot_line_gap` (2.5 mm) apart, one belonging to each, and the scissors cut
+between them; where a cell edge faces free space it still keeps its one line
+inside the cell and the cut goes anywhere outside it. No line is ever drawn
+outside a cell. `dot_line_gap = 0` puts every line on the edge itself, so
+touching cells share one. Collinear pieces on the same line are merged into one
+straight line, and the outer boundary of the whole block is left blank because
+nothing has to be cut apart there (`outer_border = on` dots it too).
 
 Bottom sides are placed mirrored (x to -x) so the piece matches the board once
 the board is flipped over; `--no-mirror-bottom` places them as they are.
@@ -97,7 +100,7 @@ the two bottom corners, and one along the left edge at mid height. Their outer
 wall is `slot_offset` (2.25 mm) inside the cell edge and the inner wall
 `slot_offset + slot_width` (6.75 mm), so a slot lies completely inside its own
 cell padding — it never crosses into a neighbouring cell and never touches the
-scissor zone, the band around the cell edge where the dotted lines run and the
+scissor zone, the band inside the cell edge where the dotted line runs and the
 cut goes. Between a slot and the board there is always at least `slot_web`
 (3 mm) of foil; a cell whose padding cannot host a slot and that web is grown
 until it can (the board stays centred), which is the only reason a cell grows
@@ -111,8 +114,7 @@ one fixes x. Because a bottom side is placed mirrored, its datum corner is the
 board's physical bottom-right; the report says so per cell.
 
 **`holes`.** Four round dowel-pin holes (`hole_dia` 5 mm) inside the cell
-corners, `hole_inset` (2 mm) from the cell edge (the centre line of the dotted
-border) to the hole edge; a negative inset moves the hole onto the edge, and
+corners, `hole_inset` (2 mm) from the cell edge to the hole edge; a negative inset moves the hole onto the edge, and
 two cells that would share a hole get one. Simple, but over-constrained: four
 pins in four holes only fit with clearance, so the piece can still shift.
 
@@ -186,7 +188,7 @@ slot_web = 3.0            # mm of foil kept between a slot and the board; cells 
 pin_dia = 3.0             # mm jig pin through a slot (the holes datum uses hole_dia)
 dot_dia = 0.5             # mm
 dot_pitch = 3.0           # mm
-dot_line_gap = 2.5        # mm between the two dotted border lines (0 = single line)
+dot_line_gap = 2.5        # each cell's dotted line runs this/2 inside its edge; touching cells show two lines this far apart, cut between them (0 = on the edge)
 hole_grid = 8.0           # pin centres (holes or slots) snap to this grid, 0 = off
 outer_border = off        # also dot the cell edges on the outer boundary of the block
 sort = height             # height (tallest boards first) | name
@@ -279,8 +281,9 @@ under every dotted line, a label in every cell and a legend underneath:
 
 The picture above is the preview of the eight example boards this tool was
 developed with, on the default 380 x 280 sheet with the slots datum: twelve
-cells, their double dotted borders, three alignment slots per cell with the
-jig pins drawn as dashed outlines, and the datum corner of each cell marked.
+cells, one dotted line just inside each cell edge (so touching cells show two
+of them and the cut goes between), three alignment slots per cell with the jig
+pins drawn as dashed outlines, and the datum corner of each cell marked.
 
 | colour | meaning |
 | --- | --- |

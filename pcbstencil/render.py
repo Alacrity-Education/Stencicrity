@@ -9,7 +9,7 @@ gerber objects.
 
 Cells can sit anywhere on the sheet (they are packed with MaxRects, see
 :mod:`pcbstencil.layout`); the only cell markings drawn are a faint dashed guide
-under every dotted line (two of them per cell edge, ``dot_line_gap`` apart) and,
+under every dotted line (one per cell edge, ``dot_line_gap/2`` inside the cell) and,
 when ``hole_grid`` is on, a very faint grid of that pitch over the whole sheet,
 so the jig pins can be seen sitting on its intersections.  Cells that did not
 fit are drawn outside the stencil boundary - the image simply grows to cover

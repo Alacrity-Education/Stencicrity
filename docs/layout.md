@@ -229,27 +229,35 @@ datum (`holes`, `slots`, `pins` and `datum_corner`, from `_datum()`), `row`
 edges — `Layout.dividers` holds `(x0, y0, x1, y1)` tuples that the preview draws
 as faint dashed guides and `_dots` walks to place the openings.
 
-1. **Collect.** The four edges of every cell are collected into a dict keyed by
+The rule is one line per cell edge, owned by that cell and running *inside* it:
+two cells that touch therefore show two lines `line_gap` apart and the scissors
+cut between them, while an edge facing free space keeps its one line inside the
+cell and the cut goes anywhere outside it. No line is ever drawn outside a cell.
+
+1. **Inset.** Every cell rectangle is pulled in by `line_gap/2` on all four
+   sides: a left edge at `x` gives a line at `x + line_gap/2`, a right edge at
+   `x` one at `x - line_gap/2`, and likewise for bottom and top. The extent of
+   a line is the extent of its edge shortened by the same `line_gap/2` at both
+   ends, so the four lines of a cell meet at their corners instead of sticking
+   out — together they are exactly the cell rectangle inset by `line_gap/2`.
+   `line_gap <= 0` leaves every line on the edge itself, so two touching cells
+   share one. A cell thinner than `line_gap` cannot hold the inset; it is then
+   clamped to half the cell in that direction, which collapses the two opposite
+   lines onto the cell's centre line and drops the two perpendicular ones (no
+   length left). A line with extent `<= _MERGE_EPS` is skipped.
+2. **Drop the block boundary.** Unless `outer_border` is set, the line of an
+   edge lying on the block's minimum or maximum on its axis is dropped: nothing
+   has to be cut apart on the outer boundary of the block. The test runs on the
+   cell **edge**, not on the position of the line it carries. The boundary comes
+   from `_block_of(areas)`, overflow cells included.
+3. **Collect.** The surviving lines go into a dict keyed by
    `(orientation, coordinate)`, the coordinate passed through a `_Snap` with
-   `_MERGE_EPS` (1e-6 mm) so that two cells whose edges are the same line to
-   within a rounding error share one key. A degenerate edge (extent
-   `<= _MERGE_EPS`) is skipped.
-2. **Drop the block boundary.** Unless `outer_border` is set, a line whose
-   coordinate equals the block's minimum or maximum on its axis is dropped:
-   nothing has to be cut apart on the outer boundary of the block. The test
-   runs on the cell edge, before doubling, so both lines of a boundary pair go
-   away together. The boundary comes from `_block_of(areas)`, overflow cells
-   included.
-3. **Double.** Each surviving edge becomes two parallel lines at
-   `-line_gap/2` and `+line_gap/2`, both with the full extent of the edge; the
-   cut runs between them. `line_gap <= 0` keeps a single line on the edge
-   itself. The shifted coordinates go through a second `_Snap`, so lines
-   belonging to two different edges that land on the same coordinate merge
-   instead of being dotted twice.
+   `_MERGE_EPS` (1e-6 mm) so that two lines that are the same line to within a
+   rounding error share one key.
 4. **Merge.** Per line, the collected intervals are merged by `_merge`:
-   overlapping *and* touching intervals become one, so a shared edge is dotted
-   once and several cells abutting one long border give a single straight
-   divider with evenly spaced dots.
+   overlapping *and* touching intervals become one, so two cells stacked along
+   one line with the same inset give a single straight divider with evenly
+   spaced dots.
 
 ## Dots
 
@@ -382,8 +390,9 @@ switched off the layout has no areas at all, the block is `(0, 0, 0, 0)` and
 | `Grid:` | pitch, whether every *pin* is on the raster and how many there are, plus one line saying either how much cell area the grid cost (`holes`) or that the cells were not grown and the slot centres moved instead (`slots`) — or `off` |
 
 Under `slots` the `Datum:` block also carries a `WARNING:` line when
-`slot_offset` is smaller than the dotted band `dot_line_gap/2 + dot_dia/2`:
-the cut would then run into the slots.
+`slot_offset` is smaller than the dotted band — how far inside the cell edge
+the dots reach, `dot_line_gap/2 + dot_dia/2`: the cut would then run into the
+slots.
 
 `_pins_on_grid` re-checks every *pin* centre of every area against the raster
 from the sheet origin with `_FIT_EPS` tolerance, so the report verifies the
@@ -402,8 +411,8 @@ board — the second is the number a fixture plate is drilled from. A pin that
 could not be put on the raster is marked `OFF GRID (the cell is too small for
 it)`. After the datum come the paste opening count, the candidate pads by state
 and the closed opening count. The last line counts the divider dots, their
-diameter and pitch, the number of dotted lines, whether an edge is one line or
-two, and whether the block boundary is included.
+diameter and pitch, the number of dotted lines, how far inside its edge each of
+them runs, and whether the block boundary is included.
 
 ## Worked example
 
@@ -439,9 +448,12 @@ generated one.
 Every cell is exactly `board + gap`: no cell is grown, because 15 mm of padding
 already covers `min_pad_for_slots`. The report says 12 cells placed with
 MaxRects (bottom-left), 0 overflow, all 36 pins (12 cells x 3) on the 8 mm
-grid, the cells not grown for it, and 1838 divider dots on 82 dotted lines —
-fewer dots than the same sheet without slots, because the dots that would fall
-inside a slot are dropped.
+grid, the cells not grown for it, and 887 divider dots on 41 dotted lines —
+one line per cell edge, 1.25 mm inside it, a few of them merged where two cells
+are stacked along the same line. No dot is lost to a slot here: the dots reach
+1.5 mm inside the cell edge and the slots start at `slot_offset` 2.25 mm. They
+are only swallowed when a datum opening reaches the line itself, as with
+`hole_inset = -2.5` (859 dots instead of 929).
 
 The same set with the other two datums, everything else unchanged:
 

@@ -458,7 +458,7 @@ Illustrative renders in `figures/` (not to scale, dimensions as in section 5):
 
 | file | shows |
 | --- | --- |
-| `figures/01-sheet-with-cells.png` | a sheet with four cells, their double dotted borders and the three datum slots per cell |
+| `figures/01-sheet-with-cells.png` | a sheet with four cells, their dotted borders and the three datum slots per cell |
 | `figures/02-cell-detail.png` | one cell with the scissor zone, the slots straddling the cut line and their dimensions |
 | `figures/03-cut-piece.png` | the same cell after the scissor cut: ragged outline, laser-cut datum walls intact |
 | `figures/04-jig-top-view.png` | the jig plate with board pocket, board pins, stencil pins, nesting direction, magnets and spring finger |

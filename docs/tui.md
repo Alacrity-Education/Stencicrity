@@ -148,7 +148,7 @@ plus value (or the edit buffer with a trailing `_` while editing):
 | `pin_dia` | pin diameter | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_dia` | dot diameter | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_pitch` | dot pitch | length | mm | 0.5 | 0.1 | `gt0` |
-| `dot_line_gap` | dotted line gap (0 = single line) | length | mm | 0.5 | 0.0 | `ge0` |
+| `dot_line_gap` | dotted line gap (between touching cells) | length | mm | 0.5 | 0.0 | `ge0` |
 | `hole_grid` | pin grid (0 = off) | length | mm | 1.0 | 0.0 | `ge0` |
 | `outer_border` | outer border | bool | — | — | — | — |
 | `sort` | sort | choice | — | — | — | height \| name |

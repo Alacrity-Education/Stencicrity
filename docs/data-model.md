@@ -282,7 +282,7 @@ The `[layout]` section and the Layout page of the TUI, one dataclass.
 | `gap` | mm | 30.0 | Spacing between two neighbouring boards. Half of it is the padding around each board. |
 | `datum` | - | `"slots"` | Which alignment features every cell gets: `DATUM_SLOTS`, `DATUM_HOLES` or `DATUM_NONE` (`"slots"` / `"holes"` / `"none"`, the tuple `DATUM_MODES`). |
 | `hole_dia` | mm | 5.0 | Dowel pin hole diameter (`holes` datum). |
-| `hole_inset` | mm | 2.0 | Cell edge (the centre line of the dotted border) to the *edge* of the hole. May be negative, which puts the hole on the line. |
+| `hole_inset` | mm | 2.0 | Cell edge to the *edge* of the hole. May be negative, which moves the hole out onto the edge. |
 | `slot_width` | mm | 4.5 | Slot size *across* the cell edge (`slots` datum). |
 | `slot_length` | mm | 12.0 | Slot size *along* the cell edge. |
 | `slot_offset` | mm | 2.25 | Cell edge to the slot's outer wall. Keeps the slot out of the scissor zone; may be 0 but never negative. |
@@ -291,7 +291,7 @@ The `[layout]` section and the Layout page of the TUI, one dataclass.
 | `pin_dia` | mm | 3.0 | Jig pin diameter for the `slots` datum; the `holes` datum uses `hole_dia` pins. |
 | `dot_dia` | mm | 0.5 | Divider dot diameter. Also the minimum distance used to deduplicate dots. |
 | `dot_pitch` | mm | 3.0 | Centre-to-centre spacing of the divider dots. |
-| `dot_line_gap` | mm | 2.5 | Distance between the two parallel dotted lines of one cell edge; 0 collapses them into a single line on the edge. |
+| `dot_line_gap` | mm | 2.5 | How far *inside* its edge a cell's dotted line runs: half of this. Two touching cells therefore show two lines this far apart and the cut goes between them; 0 puts every line on the edge itself, so touching cells share one. |
 | `hole_grid` | mm | 8.0 | Common grid every *jig pin centre* must land on, measured from the sheet origin - for either datum. 0 switches the grid off. |
 | `outer_border` | - | False | Also dot the cell edges that lie on the outer boundary of the block. |
 | `sort` | - | `"height"` | `height` (tallest board first) or `name`. |
@@ -371,7 +371,7 @@ The placement of one side, produced by `layout.pack()`.
 | `block` | Bounding box of all cells, overflow cells included. |
 | `fits` | No overflow *and* the block lies inside the sheet within 1e-6 mm. |
 | `dots` | Divider dot centres in sheet coordinates. Each becomes a flashed circle of `dot_dia` in the paste layer. |
-| `dividers` | The dotted *lines* as `(x0, y0, x1, y1)`, not the cell edges: with `dot_line_gap > 0` every cell edge contributes two of them. The renderer draws a faint dashed guide under each; the gerber contains only the dots. |
+| `dividers` | The dotted *lines* as `(x0, y0, x1, y1)`, not the cell edges: every cell edge contributes one, running `dot_line_gap / 2` inside it, so the four lines of a cell are its rectangle inset by that much. Collinear lines of different cells are merged. The renderer draws a faint dashed guide under each; the gerber contains only the dots. |
 | `heuristic` | Name of the MaxRects heuristic that won: `bottom-left`, `best short side` or `best area`. |
 | `overflow` | Number of cells that did not fit. |
 
