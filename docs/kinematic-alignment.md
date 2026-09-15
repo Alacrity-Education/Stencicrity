@@ -416,19 +416,24 @@ stencil side improves by an order of magnitude and stops being the limit.
 **Implemented.** stencicrity ships the *closed*-slot variant of 4b, not the
 open fence: a slot has to lie completely inside its own cell, because an open
 slot straddling a cell edge would cut into the neighbouring board's piece. The
-slots sit on the raster of a **modular jig**: `slot_pitch` (30 mm) is the pitch
+slots sit on the raster of a **modular jig**: `slot_pitch` (20 mm) is the pitch
 of the pin plate, every cell is rounded up to a whole number of it and its
 corners sit at `k * slot_pitch - pin_offset`, so one raster covers the whole
 sheet. Along the cell's bottom edge and its left edge — never the top or right
 one — *every* raster position that fits is opened, so the jig may use whichever
 pins suit a piece; an edge of `n` pitches carries `n - 1` slots and a cell is
 grown until its longer edge has two and its shorter one has one, which is the
-2 + 1 of the exact three-contact location. The piece is still pushed toward the
-bottom-left datum corner until the inner walls touch their pins.
+2 + 1 of the exact three-contact location (with the 20 mm pitch an 8 mm slot
+first fits 23.5 mm from a corner, so two of them need three pitches, 60 mm, and
+one needs two, 40 mm). The piece is still pushed toward the bottom-left datum
+corner until the inner walls touch their pins, and `marker` cuts a 4 mm X into
+the free foil at the raster point 3.5 mm inside that corner — the one position
+of the two datum edges that is too close to the corner for a slot — so which
+corner of a cut-out piece is the datum corner can be read at a glance.
 
 The parameters are `datum = slots | holes | none` with `slot_width` 4.5,
-`slot_length` 12.0, `slot_offset` 0.5 (cell edge to outer wall), `slot_pitch`
-30.0, `slot_web` 3.0 and `pin_dia` 3.0, so the inner wall is 5.0 mm inside the
+`slot_length` 8.0, `slot_offset` 0.5 (cell edge to outer wall), `slot_pitch`
+20.0, `slot_web` 3.0 and `pin_dia` 3.0, so the inner wall is 5.0 mm inside the
 edge and `pin_offset` is 3.5 mm. The 0.5 mm offset deliberately lets a slot
 clip the dotted line of its *own* cell (1.25 mm in) while stopping short of the
 neighbouring cell: cells touch, the two dotted lines of a shared edge stay

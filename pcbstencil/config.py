@@ -14,7 +14,8 @@ the TUI exits and is meant to be readable and editable by hand::
     [layout]
     spacing = 30.0
     datum = slots
-    slot_pitch = 30.0
+    slot_pitch = 20.0
+    marker = on
     ...
 
     [rules]
@@ -95,13 +96,14 @@ _LAYOUT_FLOATS: dict[str, tuple[str, Optional[Callable[[float], bool]], str]] = 
     "slot_pitch": ("slot_pitch", lambda v: v > 0.0, "must be positive"),
     "slot_web": ("slot_web", lambda v: v > 0.0, "must be positive"),
     "pin_dia": ("pin_dia", lambda v: v > 0.0, "must be positive"),
+    "marker_size": ("marker_size", lambda v: v > 0.0, "must be positive"),
     "dot_dia": ("dot_dia", lambda v: v > 0.0, "must be positive"),
     "dot_pitch": ("dot_pitch", lambda v: v > 0.0, "must be positive"),
     "dot_line_gap": ("dot_line_gap", lambda v: v >= 0.0, "must not be negative"),
     "hole_grid": ("hole_grid", lambda v: v >= 0.0, "must not be negative"),
 }
 #: ``[layout]`` key -> LayoutParams attribute (booleans).
-_LAYOUT_BOOLS = {"outer_border": "outer_border"}
+_LAYOUT_BOOLS = {"outer_border": "outer_border", "marker": "marker"}
 #: Keys of older files that no longer mean anything; read and dropped in
 #: silence (``slot_corner`` placed the slots before they moved onto the
 #: ``slot_pitch`` raster).
@@ -439,6 +441,11 @@ def format_config(config: Config, projects: list[Project]) -> str:
                "mm of foil kept between a slot and the board; cells grow to hold it"),
         _entry("pin_dia", _num_text(params.pin_dia),
                "mm jig pin through a slot (the holes datum uses hole_dia)"),
+        _entry("marker", _bool_text(params.marker),
+               "slots datum: cut an X at the raster point inside the datum "
+               "corner so the piece's orientation can be read"),
+        _entry("marker_size", _num_text(params.marker_size),
+               "mm, stroke length of the X (stroke width = dot_dia)"),
         _entry("dot_dia", _num_text(params.dot_dia), "mm"),
         _entry("dot_pitch", _num_text(params.dot_pitch), "mm"),
         _entry("dot_line_gap", _num_text(params.dot_line_gap),

@@ -31,7 +31,10 @@ keeps ``slot_web`` of foil to the board. The jig pins pass through the slots;
 the pin centre (``pin_offset`` inside the edge) lies on the same raster, so
 two slots on one of the two edges plus one on the other give an exact
 three-contact location when the piece is pushed toward the bottom-left
-corner; cells are sized so that this is always possible. Cell corners sit on
+corner; cells are sized so that this is always possible. An X marker
+(``marker``) is cut at the raster point ``pin_offset`` inside the datum corner,
+where the left pin column meets the bottom pin row, so the orientation of a
+cut-out piece can be read at a glance. Cell corners sit on
 the raster with phase ``-pin_offset`` so touching cells share the raster and
 their dotted lines are exactly ``dot_line_gap`` apart. With
 ``holes`` every cell gets four round holes near its corners (legacy);
@@ -252,11 +255,13 @@ class LayoutParams:
     hole_inset: float = 2.0    # dotted line (cell edge) to hole edge (mm); may be negative
     # -- slots datum --
     slot_width: float = 4.5    # slot size across the cell edge (mm)
-    slot_length: float = 12.0  # slot size along the cell edge (mm)
+    slot_length: float = 8.0   # slot size along the cell edge (mm)
     slot_offset: float = 0.5   # cell edge to the slot's outer wall (mm); the slot may clip the dotted line but never the neighbour
-    slot_pitch: float = 30.0   # raster of the modular jig (mm): slot centres along the bottom and left edges and pin centres across them lie on it; cells grow to multiples of it
+    slot_pitch: float = 20.0   # raster of the modular jig (mm): slot centres along the bottom and left edges and pin centres across them lie on it; cells grow to multiples of it
     slot_web: float = 3.0      # minimum foil between a slot's inner wall and the board (mm); cells grow to keep it
     pin_dia: float = 3.0       # jig pin diameter for the slots datum (mm); the holes datum uses hole_dia pins
+    marker: bool = True        # slots datum: cut an X at the raster point pin_offset inside the datum corner (where the left pin column meets the bottom pin row) so the piece's orientation can be read
+    marker_size: float = 4.0   # X marker: length of each of its two strokes (mm); stroke width = dot_dia
     # -- dotted border --
     dot_dia: float = 0.5       # divider dot diameter (mm)
     dot_pitch: float = 3.0     # centre-to-centre distance of divider dots (mm)
@@ -344,6 +349,7 @@ class Area:
     slots: list[tuple[float, float, float, float]] = field(default_factory=list)  # obround slots (cx, cy, w, h), sheet coords (slots datum); w along x, h along y
     pins: list[tuple[float, float]] = field(default_factory=list)    # jig pin centres, sheet coords (one per slot for the slots datum; == holes for the holes datum)
     datum_corner: tuple[float, float] = (0.0, 0.0)   # sheet coords of the corner the piece is pushed toward (slots datum: bottom-left of the cell)
+    marker: Optional[tuple[float, float]] = None      # centre of the X orientation marker, sheet coords (slots datum with marker on): (x0 + pin_offset, y0 + pin_offset)
 
     @property
     def rect(self) -> tuple[float, float, float, float]:

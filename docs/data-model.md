@@ -115,6 +115,8 @@ classDiagram
         +float slot_pitch
         +float slot_web
         +float pin_dia
+        +bool marker
+        +float marker_size
         +float dot_dia
         +float dot_pitch
         +float dot_line_gap
@@ -153,6 +155,7 @@ classDiagram
         +list slots
         +list pins
         +tuple datum_corner
+        +tuple marker
         +rect tuple
     }
     class Transform {
@@ -284,11 +287,13 @@ The `[layout]` section and the Layout page of the TUI, one dataclass.
 | `hole_dia` | mm | 5.0 | Dowel pin hole diameter (`holes` datum). |
 | `hole_inset` | mm | 2.0 | Cell edge to the *edge* of the hole. May be negative, which moves the hole out onto the edge. |
 | `slot_width` | mm | 4.5 | Slot size *across* the cell edge (`slots` datum). |
-| `slot_length` | mm | 12.0 | Slot size *along* the cell edge. |
+| `slot_length` | mm | 8.0 | Slot size *along* the cell edge. |
 | `slot_offset` | mm | 0.5 | Cell edge to the slot's outer wall. The slot may clip the cell's *own* dotted line (which runs `dot_line_gap/2` inside the edge) but never reaches the neighbouring cell; may be 0 but never negative. |
-| `slot_pitch` | mm | 30.0 | Raster of the modular jig: slot centres along the bottom and left edges and the pin centres across them lie on it, and cells grow to whole multiples of it. Must be positive. |
+| `slot_pitch` | mm | 20.0 | Raster of the modular jig: slot centres along the bottom and left edges and the pin centres across them lie on it, and cells grow to whole multiples of it. Must be positive. |
 | `slot_web` | mm | 3.0 | Least foil between a slot's inner wall and the board. A cell grows until it fits. |
 | `pin_dia` | mm | 3.0 | Jig pin diameter for the `slots` datum; the `holes` datum uses `hole_dia` pins. |
+| `marker` | - | True | `slots` datum: cut an X into the foil at the raster point `pin_offset` inside the datum corner, so the orientation of a cut-out piece can be read at a glance. |
+| `marker_size` | mm | 4.0 | Length of each of the X's two strokes; they are cut `dot_dia` wide. Must be positive. |
 | `dot_dia` | mm | 0.5 | Divider dot diameter. Also the minimum distance used to deduplicate dots. |
 | `dot_pitch` | mm | 3.0 | Centre-to-centre spacing of the divider dots. |
 | `dot_line_gap` | mm | 2.5 | How far *inside* its edge a cell's dotted line runs: half of this. Two touching cells therefore show two lines this far apart and the cut goes between them; 0 puts every line on the edge itself, so touching cells share one. |
@@ -360,6 +365,7 @@ The placement of one side, produced by `layout.pack()`.
 | `slots` | The obround slots of this cell as `(cx, cy, w, h)` in sheet coordinates, `w` along x and `h` along y (`slots` datum; empty otherwise). One per `slot_pitch` raster position that fits: first the bottom edge left to right (`length x width`), then the left edge bottom to top (`width x length`). An edge of `n` pitches carries `n - 1` of them, and a cell always has at least 2 + 1. |
 | `pins` | The jig pin centres in sheet coordinates, for *either* datum: one per slot, tangent to its inner wall, for `slots`; identical to `holes` for `holes`; empty for `none`. Every one of them lies on the datum's raster (`slot_pitch` or `hole_grid`). |
 | `datum_corner` | The cell corner the cut-out piece is pushed toward - the cell's bottom left, `(x, y)`. For a mirrored side that is the board's physical bottom *right*. |
+| `marker` | Centre of the X orientation marker, `(x + pin_offset, y + pin_offset)` in sheet coordinates - the raster point where the left pin column meets the bottom pin row, the one that never carries a slot. `None` under the `holes` and `none` datums and whenever `marker` is off. |
 
 `rect` is `(x, y, x + w, y + h)`.
 

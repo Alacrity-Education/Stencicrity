@@ -127,11 +127,13 @@ datum = slots             # slots | holes | none
 hole_dia = 5.0
 hole_inset = 2.0
 slot_width = 4.5
-slot_length = 12.0
+slot_length = 8.0
 slot_offset = 0.5
-slot_pitch = 30.0
+slot_pitch = 20.0
 slot_web = 3.0
 pin_dia = 3.0
+marker = on
+marker_size = 4.0
 dot_dia = 0.5
 dot_pitch = 3.0
 dot_line_gap = 2.5
@@ -170,6 +172,8 @@ RBARF/bottom/TP1.1@148.082,-99.568 = ignore   # SMDPad C ⌀1.00
 | | `slot_corner` | float, **obsolete** | read and dropped in silence |
 | | `slot_web` | float > 0 | `slot_web` |
 | | `pin_dia` | float > 0 | `pin_dia` |
+| | `marker` | bool | `marker` (the orientation X, `slots` datum only) |
+| | `marker_size` | float > 0 | `marker_size` (stroke length of the X; it is cut `dot_dia` wide) |
 | | `dot_dia` | float > 0 | `dot_dia` |
 | | `dot_pitch` | float > 0 | `dot_pitch` |
 | | `dot_line_gap` | float >= 0 | `dot_line_gap` |

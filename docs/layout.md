@@ -6,7 +6,9 @@ where every side sits on the stencil sheet, where its alignment features (the
 no gerber objects are read here, only the bounding box of every project — and
 it is deterministic: the same sides and the same `LayoutParams` always give the
 same sheet. The public entry points are `pack(sides, config) -> Layout` and
-`layout_report(layout, config) -> str`; everything else is module private.
+`layout_report(layout, config) -> str`, plus `ordered_sides` and the two
+helpers the gerber writer and the preview stroke the orientation X with,
+`marker_strokes()` and `marker_half()`; everything else is module private.
 Sheet coordinates have their origin at the bottom left corner of the stencil,
 X to the right, Y up, in millimetres (see [`data-model.md`](data-model.md)).
 
@@ -23,14 +25,14 @@ cell size:
 
 | `datum` | cell |
 | --- | --- |
-| `slots` | `board + 2 * max(gap/2, min_pad_for_slots)` on both axes, each rounded **up to a whole number of `slot_pitch`**, then grown until the longer axis carries two slots and the shorter one carries one (`_edge_for_slots`, the 2 + 1 of an exact location — 3 and 2 pitches with the default numbers). |
+| `slots` | `board + 2 * max(gap/2, min_pad_for_slots)` on both axes, each rounded **up to a whole number of `slot_pitch`**, then grown until the longer axis carries two slots and the shorter one carries one (`_edge_for_slots`, the 2 + 1 of an exact location — 3 and 2 pitches, 60 and 40 mm with the default raster). |
 | `holes` | `board + gap`, then `_cell_size` grows each side until the hole-to-hole distance is a whole number of grid pitches. |
 | `none` | exactly `board + gap`. |
 
 ```
  datum = slots (default)              · = divider dots (two lines per edge)
  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·   [==] = obround slot,  x = jig pin
- ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
+ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·   X = orientation marker (marker, 4 mm)
  ·                                ·   the board bbox is centred in the cell;
 [=]       +------------+          ·   padding = (cell - board) / 2, at least
 [x]       |            |          ·   max(gap/2, min_pad_for_slots)
@@ -38,11 +40,11 @@ cell size:
  ·        |            |          ·   slot_offset  edge -> outer wall (0.5)
  ·        +------------+          ·   slot_inner   edge -> inner wall (5.0)
 [=]                               ·   slot_web     inner wall -> board (>= 3)
-[x]                               ·   slot_pitch   raster of the jig (30):
-[=]  [==x==]        [==x==]       ·                cell edges, slot centres
+[x]                               ·   slot_pitch   raster of the jig (20):
+[=] X  [==x==]      [==x==]       ·                cell edges, slot centres
  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·                and pin centres ride on it
  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·   the piece is pushed toward the
- ^     |<-- 30 -->|                   bottom-left datum corner until each
+ ^        |<--- 20 --->|              bottom-left datum corner until each
  datum corner (Area.datum_corner)     inner wall touches its pin
 
 
@@ -99,19 +101,20 @@ the report prints `padding ≥ 15.0 mm` instead of `padding 15.0 mm` whenever a
 raster is on.
 
 Worked arithmetic for the smallest board in the sample set, RBARF, with
-`datum = slots` and otherwise default parameters (`gap` 30, `slot_pitch` 30,
-`slot_offset` 0.5, `slot_width` 4.5, `slot_web` 3):
+`datum = slots` and otherwise default parameters (`gap` 30, `slot_pitch` 20,
+`slot_offset` 0.5, `slot_width` 4.5, `slot_length` 8, `slot_web` 3):
 
 | step | value |
 | --- | --- |
 | board bbox | 13.405 x 11.610 mm |
 | padding floor `max(gap/2, min_pad_for_slots)` | `max(15, 0.5 + 4.5 + 3)` = 15 mm |
 | raw cell (`board + 2 * 15`) | 43.405 x 41.610 mm |
-| rounded up to whole pitches | `ceil(43.405/30)` = 2, `ceil(41.610/30)` = 2 → 60 x 60 mm |
-| 2 + 1 minimum (`_edge_for_slots`) | the longer axis needs 3 pitches → 90 x 60 mm |
-| cell | 90.0 x 60.0 mm |
-| slots | bottom edge 90 mm → 2, left edge 60 mm → 1 |
-| padding kept by the board | (90 - 13.405)/2 = 38.3 mm in x, (60 - 11.610)/2 = 24.2 mm in y |
+| rounded up to whole pitches | `ceil(43.405/20)` = 3, `ceil(41.610/20)` = 3 → 60 x 60 mm |
+| 2 + 1 minimum (`_edge_for_slots`) | the longer axis needs 3 pitches (60 mm), which 60 x 60 already has |
+| cell | 60.0 x 60.0 mm |
+| slots | bottom edge 60 mm → 2, left edge 60 mm → 2 |
+| padding kept by the board | (60 - 13.405)/2 = 23.3 mm in x, (60 - 11.610)/2 = 24.2 mm in y |
+| orientation X (`Area.marker`) | the cell corner + (3.5, 3.5) |
 
 The same board with `datum = holes` and the legacy pin grid (`hole_dia` 5,
 `hole_inset` 2, `hole_grid` 8):
@@ -130,9 +133,9 @@ The same board with `datum = holes` and the legacy pin grid (`hole_dia` 5,
 
 With `hole_grid = 0` the holes cell is exactly 43.405 x 41.610 mm, and with
 `datum = none` it always is. The `slots` datum is the expensive one for a small
-board: rounding 43.4 x 41.6 mm up to 90 x 60 mm costs 1,494 mm2, but it is what
-puts the cell corners, the slots and the pins of every cell on the same 30 mm
-raster — 3,594 mm2 for this cell, 28,039 mm2 over the twelve generated cells.
+board: rounding 43.4 x 41.6 mm up to 60 x 60 mm is what puts the cell corners,
+the slots and the pins of every cell on the same 20 mm raster — 1,793.9 mm2 for
+this cell, 22,225.1 mm2 over the thirteen cells of the sample set.
 
 ## Ordering
 
@@ -230,7 +233,7 @@ is `_snap_down(max(0, (sheet - block) / 2), grid)` on each axis, so it is a
 whole number of pitches and every pin stays on the raster measured from the
 sheet origin. With no placed cell at all the offset is zero. The block is
 therefore centred only to within one pitch — under `slots` it also starts at
-`pitch - pin_offset` (26.5 mm) at the earliest, because that is the first
+`pitch - pin_offset` (16.5 mm) at the earliest, because that is the first
 admissible corner on the sheet.
 
 **Touching cells.** Under `slots` every cell size is a whole number of pitches
@@ -251,8 +254,9 @@ coordinate onto an already translated far edge when the two are within
 After that, `pack` builds one `Area` per side: the cell rectangle, the board
 rectangle (`board_rect`, the board bbox centred in the cell), the board → sheet
 `Transform` (`dx = bx - (-maxx if mirror else minx)`, `dy = by - miny`), the
-datum (`holes`, `slots`, `pins` and `datum_corner`, from `_datum()`), `row`
-(the packing order index, informational only) and the `overflow` flag.
+datum (`holes`, `slots`, `pins` and `datum_corner`, from `_datum()`), the
+centre of the orientation X (`marker`, from `_marker()`), `row` (the packing
+order index, informational only) and the `overflow` flag.
 
 ## Dividers
 
@@ -342,9 +346,11 @@ for off in _slot_offsets(h, params):             # the left edge, bottom to top
 the raster positions are `pin_offset + k * slot_pitch`; the ones that keep the
 slot inside the span `_slot_span` returns — `[slot_offset + length/2,
 size - slot_offset - length/2]`, which holds its round ends `slot_offset` clear
-of the two cell edges it runs into — are returned, in order. With the default
-numbers that is `3.5 + 30k` for `k = 1, 2, ...`, so an edge of `n` pitches
-carries `n - 1` slots: 60 mm one, 90 mm two, 120 mm three. `_edge_for_slots`
+of the two cell edges it runs into — are returned, in order. That clearance is
+`slot_offset + slot_length/2` = 4.5 mm with the default numbers, more than
+`pin_offset`, so the position at the corner never qualifies: what is left is
+`3.5 + 20k` for `k = 1, 2, ...`, 23.5 mm being the first, and an edge of `n`
+pitches carries `n - 1` slots: 40 mm one, 60 mm two, 80 mm three. `_edge_for_slots`
 walks the same function when `_cell_of` sizes a cell, so the two can never
 disagree.
 
@@ -364,6 +370,51 @@ own line is another `dot_line_gap` away. The inner wall is `slot_inner` inside
 the edge and the cell always has at least `min_pad_for_slots = slot_inner +
 slot_web` of padding (`_cell_of` saw to it), so the board keeps its `slot_web`
 of foil and the squeegee keeps a clear lane beside it.
+
+### The orientation X
+
+A cut-out piece is a rectangle of foil with slots along two of its edges, and
+once it is off the sheet nothing on it says which of its four corners the jig
+locates it by. `marker` (on by default, `slots` only) cuts a small X into the
+foil at the raster point `pin_offset` inside the datum corner —
+`(x0 + pin_offset, y0 + pin_offset)`, where the left pin column meets the
+bottom pin row. `_marker(x, y, params)` computes that centre and `pack` stores
+it in `Area.marker`; it is `None` under the other two datums and whenever
+`marker` is off.
+
+That one raster point is always free foil. A slot needs `slot_offset +
+slot_length/2` = 4.5 mm of clearance from the cell corner, `pin_offset` is only
+3.5 mm from it, so the corner position is the one position of the two edges
+`_slot_offsets` never returns — with the default numbers the nearest slot's
+near end is 19.5 mm away.
+
+Everything in that corner, measured from the cell corner along either axis and
+with the default numbers:
+
+| feature | mm from the corner |
+| --- | --- |
+| the cell's own dotted line | 1.25 |
+| the X's cut foil (`3.5 ± marker_half`) | 1.836 .. 5.164 |
+| the X's centre = the bottom pin row and the left pin column | 3.5 |
+| the first raster position a slot is cut at | 23.5 (its near end 19.5) |
+
+`marker_strokes(center, size)` returns the two strokes of the X as
+`(x0, y0, x1, y1)`: two segments of `marker_size` through the centre at +45 and
+-45 degrees. Each arm is `marker_size / 2` = 2 mm long and reaches
+`marker_size * sqrt(2) / 4` = 1.414 mm from the centre in x and in y, so the
+X's bounding square is `marker_size * sqrt(2) / 2` = 2.83 mm wide. Both the
+gerber writer and the preview stroke them `dot_dia` wide, which puts the cut
+foil another `dot_dia/2` further out: `marker_half(params)` is that outer
+reach, 1.664 mm with the defaults. The X therefore stays 1.836 mm clear of the
+cell edge and 0.586 mm clear of the cell's own dotted line (1.25 mm inside the
+edge), and nothing else of the cell is anywhere near it.
+
+`cli._write_paste` emits the strokes last, under a `--- orientation markers ---`
+comment, one `writer.add_line(x0, y0, x1, y1, dot_dia)` per stroke — the X is a
+real opening in the paste layer, not an annotation — and the preview draws it
+red like every other opening, in its true stroke width (see
+[`render.md`](render.md)). `marker = off` drops it and `marker_size` sizes it;
+both rows are dimmed in the TUI under the other two datums.
 
 ### `holes`
 
@@ -387,12 +438,20 @@ and every cell is exactly `board + gap`, whatever `hole_grid` says.
 ### Dots inside a datum opening
 
 `_dots` is handed a `_Cover(areas, params)` and drops any dot whose centre would
-fall inside a slot or a dowel hole — a dot there would be cut out of the foil
-twice and weaken the wall the pin touches. `_Cover` stores every opening as a
-segment plus a radius (a slot is a stadium: its centre segment grown by
-`min(w, h)/2`; a hole is a point grown by `hole_dia/2`) and buckets them on a
-raster at least as coarse as the largest opening, so `covers(x, y)` only tests
-the shapes in one bucket. `_in_obround` is the point-in-stadium test.
+fall inside a slot, a dowel hole or an X marker — a dot there would be cut out
+of the foil twice and weaken the wall the pin touches, or blunt the X. `_Cover`
+stores every opening as a segment plus a radius (a slot is a stadium: its
+centre segment grown by `min(w, h)/2`; a hole is a point grown by
+`hole_dia/2`), an X as the bounding square of its cut foil (`marker_half` on
+each side of `Area.marker`, so anything in there sits in or right beside a
+stroke), and buckets both on a raster at least as coarse as the largest of
+them, so `covers(x, y)` only tests the shapes in one bucket. `_in_obround` is
+the point-in-stadium test, the square is tested directly.
+
+With the default numbers no dot is ever dropped by an X: a cell's dotted lines
+run 1.25 mm inside its edges and the X's square only begins 1.836 mm in, so the
+two lines nearest to it pass outside it by 0.586 mm. A wider `dot_line_gap` or
+a bigger `marker_size` moves a line into the square, and the dots in there go.
 
 ## `fits`
 
@@ -412,7 +471,7 @@ switched off the layout has no areas at all, the block is `(0, 0, 0, 0)` and
 ## `layout_report`
 
 `layout_report(layout, config)` renders the text that becomes the first half of
-`<name>-report.txt`. Its head is five lines:
+`<name>-report.txt`. Its head is five lines, six under `slots`:
 
 | line | content |
 | --- | --- |
@@ -420,6 +479,7 @@ switched off the layout has no areas at all, the block is `(0, 0, 0, 0)` and
 | `Block:` | block size and its corners, `FITS` or `DOES NOT FIT` |
 | `Cells:` | placed count, winning heuristic, overflow count, gap, padding (`≥` when the cells were grown), sort order |
 | `Datum:` | the mode and its numbers — for `slots` three or four lines (the raster, the two wall offsets, the pin diameter and the push direction; the slot size and the bottom+left counts that occur; the sizing rule and the web; and, when the slots reach the dotted line, the line saying so), for `holes` one (diameter, inset and the resulting centre offset), for `none` just `none` |
+| `Marker:` | `slots` only: two lines for the X — its size, the raster point it is cut at and why that point is free; the two ±45° strokes, their `dot_dia` width and how far the cut foil reaches from the centre (`marker_half`) — or the single line `off (no orientation X is cut)` |
 | `Grid:` | the pitch and where it comes from (`slot_pitch` or `hole_grid`), whether every *pin* is on it and how many there are, plus a line with the cell area it cost — or `off` |
 
 Under `slots` the `Datum:` block explains that the slots clip the cell's own
@@ -431,6 +491,15 @@ lines of a shared edge, and the slot never reaches the other one. A `hole_grid`
 set under the slots datum gets one line saying it applies to the holes datum
 only.
 
+Two `WARNING:` lines can follow those blocks, both only reachable with hand-set
+numbers. `_crowded(params)` catches slots that would run into each other (a
+`slot_length` longer than the pitch, or a first raster position closer to the
+corner than `slot_inner + slot_length/2`). `_marker_trouble(layout)` catches an
+X that does not fit where it is cut: `marker_half` larger than `pin_offset`
+means it crosses the cell edge, and an X whose square overlaps a slot — it
+names the first offending X and slot — means it has grown into the raster. With
+the defaults neither fires.
+
 `_pins_on_grid` re-checks every *pin* centre of every area against the raster
 from the sheet origin with `_FIT_EPS` tolerance, so the report verifies the
 invariant rather than asserting it. `_grid_waste` sums
@@ -439,8 +508,9 @@ the square millimetres the grid cost against plain `board + gap`.
 
 Then one block per area: the label (with `(mirrored)`), the cell rectangle, the
 board rectangle and its size, then the datum. Under `slots` that is the datum
-corner, the slot count per edge (`4 on the bottom edge + 3 on the left edge`),
-every slot as `(cx, cy) w x h`, every jig pin centre and a
+corner, a `marker X (4 mm strokes)` line with the centre of that cell's X (only
+when it has one), the slot count per edge (`6 on the bottom edge + 5 on the
+left edge`), every slot as `(cx, cy) w x h`, every jig pin centre and a
 `nesting:` line giving the push direction in sheet *and* board coordinates (a
 mirrored side is pushed toward the board's physical bottom-right). Under
 `holes` it is the four hole centres and the same four as pins. Every coordinate
@@ -455,62 +525,68 @@ them runs, and whether the block boundary is included.
 ## Worked example
 
 Eight KiCad gerber zips in one folder, `--batch --no-open`, everything left at
-the defaults: 380x280 landscape, `gap` 30, `datum = slots` (4.5 x 12 mm slots,
-0.5 mm offset, 30 mm pitch, 3 mm web, 3 mm pins), dots 0.5 mm at 3 mm pitch,
-`dot_line_gap` 2.5, `hole_grid` 8 (holes datum only), `outer_border` off,
-`sort = height`.
+the defaults: 380x280 landscape, `gap` 30, `datum = slots` (4.5 x 8 mm slots,
+0.5 mm offset, 20 mm pitch, 3 mm web, 3 mm pins, a 4 mm orientation X), dots
+0.5 mm at 3 mm pitch, `dot_line_gap` 2.5, `hole_grid` 8 (holes datum only),
+`outer_border` off, `sort = height`.
 
 The first pack sees all 13 relevant sides and the block measures
-**780.00 x 240.00 mm** with 4 cells in overflow — the raster is not free. Before
+**600.00 x 260.00 mm** with 3 cells in overflow — the raster is not free. Before
 generating, the CLI drops every enabled side without a single opening:
 `PhotoAmp bottom` has no paste layer and nothing was opened on it, so it goes,
-and the remaining 12 sides are packed again, to **660.00 x 240.00 mm at
-(26.50, 26.50)..(686.50, 266.50)**, bottom-left heuristic, 9 placed and 3 in
+and the remaining 12 sides are packed again, to **500.00 x 260.00 mm at
+(16.50, 16.50)..(516.50, 276.50)**, bottom-left heuristic, 10 placed and 2 in
 overflow. Dropping one side changes both the block and sometimes the winning
 heuristic, which is worth remembering when comparing the first preview with the
 generated one.
 
 | cell | side | x | y | w | h | slots (bottom + left) |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| 1 | LED lamp for gardening top | 26.50 | 26.50 | 150.00 | 120.00 | 4 + 3 |
-| 2 | alacrity badge top | 176.50 | 26.50 | 120.00 | 90.00 | 3 + 2 |
-| 3 | alacrity badge bottom (mirrored) | 176.50 | 116.50 | 120.00 | 90.00 | 3 + 2 |
-| 4 | Midea WiFi Dongle top | 296.50 | 26.50 | 60.00 | 90.00 | 1 + 2 |
-| 5 | Midea WiFi Dongle bottom (mirrored) | 296.50 | 116.50 | 60.00 | 90.00 | 1 + 2 |
-| 6 | indxworks top | 26.50 | 146.50 | 90.00 | 60.00 | 2 + 1 |
-| 7 | indxworks bottom (mirrored) | 26.50 | 206.50 | 90.00 | 60.00 | 2 + 1 |
-| 8 | airbox top | 116.50 | 206.50 | 90.00 | 60.00 | 2 + 1 |
-| 9 | PhotoAmp top | 206.50 | 206.50 | 120.00 | 60.00 | 3 + 1 |
-| 10 | KliFan bottom (mirrored), overflow | 386.50 | 26.50 | 120.00 | 60.00 | 3 + 1 |
-| 11 | RBARF top, overflow | 506.50 | 26.50 | 90.00 | 60.00 | 2 + 1 |
-| 12 | RBARF bottom (mirrored), overflow | 596.50 | 26.50 | 90.00 | 60.00 | 2 + 1 |
+| 1 | LED lamp for gardening top | 16.50 | 16.50 | 140.00 | 120.00 | 6 + 5 |
+| 2 | alacrity badge top | 156.50 | 16.50 | 120.00 | 100.00 | 5 + 4 |
+| 3 | alacrity badge bottom (mirrored) | 156.50 | 116.50 | 120.00 | 100.00 | 5 + 4 |
+| 4 | Midea WiFi Dongle top | 276.50 | 16.50 | 60.00 | 80.00 | 2 + 3 |
+| 5 | Midea WiFi Dongle bottom (mirrored) | 276.50 | 96.50 | 60.00 | 80.00 | 2 + 3 |
+| 6 | indxworks top | 16.50 | 136.50 | 60.00 | 60.00 | 2 + 2 |
+| 7 | indxworks bottom (mirrored) | 76.50 | 136.50 | 60.00 | 60.00 | 2 + 2 |
+| 8 | airbox top | 276.50 | 176.50 | 100.00 | 60.00 | 4 + 2 |
+| 9 | PhotoAmp top | 16.50 | 196.50 | 120.00 | 60.00 | 5 + 2 |
+| 10 | KliFan bottom (mirrored) | 136.50 | 216.50 | 100.00 | 60.00 | 4 + 2 |
+| 11 | RBARF top, overflow | 396.50 | 16.50 | 60.00 | 60.00 | 2 + 2 |
+| 12 | RBARF bottom (mirrored), overflow | 456.50 | 16.50 | 60.00 | 60.00 | 2 + 2 |
 
-Every cell is a whole number of 30 mm steps, every corner sits at
-`k * 30 - 3.5` mm and every cell touches its neighbours. The report says 9
-cells placed with MaxRects (bottom-left), 3 overflow, all 46 pins (one per
-slot) on the 30 mm `slot_pitch` raster, 28,038.9 mm2 of cell area spent on it,
-and 861 divider dots on 35 dotted lines — one line per cell edge, 1.25 mm
-inside it, a few of them merged where two cells are stacked along the same
-line. 136 dots of the raw dot grid fall inside a slot and are dropped: with a
-0.5 mm offset a slot always crosses the line of its own cell, which is the
-point (the foil beside the board stays free), and never the neighbour's.
+Every cell is a whole number of 20 mm steps, every corner sits at
+`k * 20 - 3.5` mm and every cell touches its neighbours. The report says 10
+cells placed with MaxRects (bottom-left), 2 overflow, all 74 pins (one per
+slot) on the 20 mm `slot_pitch` raster, 20,238.9 mm2 of cell area spent on it,
+an X 3.5 mm inside each of the 12 datum corners, and 900 divider dots on 38
+dotted lines — one line per cell edge, 1.25 mm inside it, a few of them merged
+where two cells are stacked along the same line. 110 dots of the raw dot grid
+fall inside a slot and are dropped, none inside an X: with a 0.5 mm offset a
+slot always crosses the line of its own cell, which is the point (the foil
+beside the board stays free), and never the neighbour's, while the X sits well
+inside its own line.
 
-The same set with the other two datums, everything else unchanged:
+The same 13 sides with the other two datums, everything else unchanged (the
+first pack, before `PhotoAmp bottom` is dropped):
 
-| `datum` | block after dropping `PhotoAmp bottom` | cells | raster |
+| `datum` | block, all 13 sides | cells | raster |
 | --- | --- | --- | --- |
-| `slots` | 660.00 x 240.00 mm, 3 overflow | whole multiples of 30 mm, grown by 28,038.9 mm2 | 46 pins on the 30 mm `slot_pitch` |
-| `holes` | 353.00 x 273.00 mm, fits | grown by 9,090.9 mm2 in total | 48 pins on the 8 mm `hole_grid` |
-| `none` | 361.35 x 194.30 mm, fits | exactly `board + gap` | off (no pins to align) |
+| `slots` | 600.00 x 260.00 mm, 3 overflow | whole multiples of 20 mm, grown by 22,225.1 mm2 | 81 pins on the 20 mm `slot_pitch` |
+| `holes` | 433.00 x 265.00 mm, 1 overflow | grown by 9,806.1 mm2 in total | 52 pins on the 8 mm `hole_grid` |
+| `none` | 361.35 x 230.84 mm, fits | exactly `board + gap` | off (no pins to align) |
 
-`none` is the floor. `holes` is padded out to the next 8 mm multiple, RBARF's
-43.405 x 41.610 mm becoming 49 x 49 mm. `slots` is by far the most expensive
-here: the same RBARF cell becomes 90 x 60 mm, because a 30 mm raster cannot
-carry two slots on one edge in less than three steps. Thirteen small boards on
-a 380 x 280 sheet are the worst case for it — a coarse raster pays off on
-fewer, larger boards, or on a larger sheet (all 13 sides fit on 600 x 600, block
-540 x 210 mm), and `--slot-pitch 20` brings the default sheet within reach
-again (600 x 260 mm, 3 overflow).
+`none` is the floor, and `holes` with `hole_grid = 0` lands exactly on it
+(361.35 x 230.84 mm). With the grid on, `holes` is padded out to the next 8 mm
+multiple, RBARF's 43.405 x 41.610 mm becoming 49 x 49 mm. `slots` is by far the
+most expensive here: the same RBARF cell becomes 60 x 60 mm, because 43.4 x
+41.6 mm rounds up to three 20 mm steps on both axes — and two slots on one edge
+would need three steps anyway. Thirteen small boards on a 380 x 280 sheet are
+the worst case for it — a raster pays off on fewer, larger boards, or on a
+larger sheet (all 13 sides fit on 600 x 600, block 560 x 200 mm with 81 slots
+and 81 pins), and a finer raster or a tighter gap brings the default sheet
+within reach again (`--slot-pitch 10` gives 370 x 250 mm, `--gap 20`
+340 x 240 mm, both fitting).
 
 ## Performance
 
@@ -519,7 +595,7 @@ projects (13 sides, mean of 50 calls):
 
 | configuration | time per `pack` |
 | --- | --- |
-| `datum = slots`, `slot_pitch = 30` | ~1.4 ms |
+| `datum = slots`, `slot_pitch = 20` | ~1.8 ms |
 | `datum = holes`, `hole_grid = 8` | ~1.9 ms |
 | `datum = none` | ~1.2 ms |
 

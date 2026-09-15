@@ -146,6 +146,8 @@ plus value (or the edit buffer with a trailing `_` while editing):
 | `slot_pitch` | slot pitch (modular jig raster) | length | mm | 5.0 | 1.0 | `gt0` |
 | `slot_web` | slot web (to board) | length | mm | 0.5 | 0.1 | `gt0` |
 | `pin_dia` | pin diameter | length | mm | 0.5 | 0.1 | `gt0` |
+| `marker` | orientation marker | bool | — | — | — | — |
+| `marker_size` | marker size | length | mm | 0.5 | 0.5 | `gt0` |
 | `dot_dia` | dot diameter | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_pitch` | dot pitch | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_line_gap` | dotted line gap (between touching cells) | length | mm | 0.5 | 0.0 | `ge0` |
@@ -166,10 +168,11 @@ toggling. See [data-model.md](data-model.md) for what each parameter means.
 slots → holes → none. It also decides which of the other rows are *relevant*:
 `DATUM_ROWS` maps each datum-specific attribute to the mode it belongs to and
 `field_applies(field, params)` answers whether a row matters right now — the
-two hole rows under `slots`, the six slot rows (`slot_width`, `slot_length`,
-`slot_offset`, `slot_pitch`, `slot_web`, `pin_dia`) under `holes`, and both
-groups under `none`, are drawn with `curses.A_DIM` added to their attribute
-(the cursor's `A_REVERSE` still wins visually). The rows that are shared by
+two hole rows under `slots`, the eight slot and marker rows (`slot_width`,
+`slot_length`, `slot_offset`, `slot_pitch`, `slot_web`, `pin_dia`, `marker`,
+`marker_size`) under `holes`, and both groups under `none`, are drawn with
+`curses.A_DIM` added to their attribute (the cursor's `A_REVERSE` still wins
+visually). The rows that are shared by
 every datum — spacing, the dots, the hole grid, the outer border and the sort
 order — are never dimmed; `hole_grid` only bites under `holes`, which its label
 says.

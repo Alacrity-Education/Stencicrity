@@ -20,7 +20,9 @@ The alignment datum is drawn on top of the openings: the slots are openings
 themselves (red obrounds), every jig pin is a dashed blue ghost circle where
 the fixture pin comes through the foil, and the ``slots`` datum also marks the
 corner the piece is pushed into with an orange bracket and a small green arrow
-pointing at it.
+pointing at it.  The X orientation marker is an opening like any other, so it
+is drawn red, in the ``dot_dia`` stroke width it is cut with, just inside the
+bracket.
 
 The image carries a millimetre ruler along its left and bottom edge (origin at
 the bottom left corner of the stencil) and a legend band underneath.  Sheet
@@ -43,6 +45,7 @@ from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 
 from .gerber import Region, Stroke, contour_points, object_geometry, polygons_of
+from .layout import marker_strokes
 from .model import STATE_IGNORE, STATE_OPEN, STATE_UNDEFINED, Area, Layout, Pad
 
 __all__ = ["render_preview", "open_file"]
@@ -494,6 +497,17 @@ def _obround(cx: float, cy: float, w: float, h: float) -> BaseGeometry:
     return LineString([(cx - ex, cy - ey), (cx + ex, cy + ey)]).buffer(r, quad_segs=24)
 
 
+def _stroke_shape(x0: float, y0: float, x1: float, y1: float,
+                  width: float) -> BaseGeometry:
+    """A straight stroke of ``width`` with round ends, sheet coordinates.
+
+    The same shape the gerber writer produces for :meth:`GerberWriter.add_line`
+    with a round aperture, so the preview shows the X marker as it is cut.
+    """
+    return LineString([(x0, y0), (x1, y1)]).buffer(max(width, 0.0) / 2.0,
+                                                   quad_segs=12)
+
+
 def _draw_datum(draw: ImageDraw.ImageDraw, layout: Layout,
                 to_px: Callable[[float, float], tuple[float, float]],
                 ppmm: float, scale: float) -> None:
@@ -610,6 +624,11 @@ def render_preview(layout: Layout, path: str, *, px_per_mm: float = 20.0, max_px
             openings.ellipse(px, py, max(1.0, params.hole_dia / 2.0 * ppmm))
         for sx, sy, sw, sh in area.slots:
             _fill_geometry(openings, _obround(sx, sy, sw, sh), _IDENTITY, to_px)
+        # The orientation X: two dot_dia wide strokes, an opening like the rest.
+        if area.marker is not None:
+            for mx0, my0, mx1, my1 in marker_strokes(area.marker, params.marker_size):
+                _fill_geometry(openings, _stroke_shape(mx0, my0, mx1, my1, params.dot_dia),
+                               _IDENTITY, to_px)
 
     # 2. Copper, then every pad.
     copper.composite(img, COLOR_COPPER)

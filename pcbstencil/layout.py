@@ -28,7 +28,12 @@ Every cell also carries the *datum* the jig pins locate it by
     floor of ``min_pad_for_slots``).  The piece is lowered over the pins and
     pushed toward the bottom-left *datum corner*, so the wall nearest the
     board touches its pin: two contacts on one edge, one on the other, exact
-    constraint.
+    constraint.  ``marker`` cuts a small X into the foil at the raster point
+    ``pin_offset`` inside that datum corner - where the left pin column meets
+    the bottom pin row, the one raster point of the two edges that is too
+    close to the corner to carry a slot - so which corner of a cut-out piece
+    is the datum corner (and therefore which way round the piece goes) can be
+    read at a glance.
 ``holes``
     Four round dowel holes near the cell corners, ``hole_inset`` away from the
     cell edges (the legacy, over-constrained scheme).
@@ -102,7 +107,8 @@ from .model import (
 )
 from .pads import natural_key
 
-__all__ = ["pack", "layout_report", "ordered_sides"]
+__all__ = ["pack", "layout_report", "ordered_sides", "marker_strokes",
+           "marker_half"]
 
 _EPS = 1e-9
 _FIT_EPS = 1e-6
@@ -287,6 +293,48 @@ def _edge_for_slots(count: int, params: LayoutParams) -> float:
            and steps < _MAX_PITCH_STEPS):
         steps += 1
     return steps * pitch
+
+
+def marker_strokes(center: tuple[float, float], size: float
+                   ) -> list[tuple[float, float, float, float]]:
+    """The two crossed strokes of an X marker, as ``(x0, y0, x1, y1)``.
+
+    Two segments of length ``size`` at +45 and -45 degrees through ``center``:
+    together they are an X whose bounding square is ``size * sqrt(2) / 2``
+    wide (a 4 mm X reaches 1.41 mm from its centre).  Both the gerber writer
+    and the preview stroke them ``dot_dia`` wide, so the foil actually goes
+    ``dot_dia / 2`` further out - see :func:`marker_half`.
+    """
+    cx, cy = center
+    half = max(0.0, size) * math.sqrt(2.0) / 4.0        # half the X's square
+    return [(cx - half, cy - half, cx + half, cy + half),
+            (cx - half, cy + half, cx + half, cy - half)]
+
+
+def marker_half(params: LayoutParams) -> float:
+    """Half the side of the square an X marker cuts out of the foil.
+
+    The strokes themselves reach ``marker_size * sqrt(2) / 4`` from the
+    centre; the round ``dot_dia`` stroke adds half its width on top.
+    """
+    return (max(0.0, params.marker_size) * math.sqrt(2.0) / 4.0
+            + max(0.0, params.dot_dia) / 2.0)
+
+
+def _marker(x: float, y: float, params: LayoutParams) -> tuple[float, float] | None:
+    """Centre of the X orientation marker of the cell at ``(x, y)``, or ``None``.
+
+    Only the ``slots`` datum has one, and only when ``params.marker`` is set:
+    the raster point ``pin_offset`` inside the datum corner, where the left
+    pin column meets the bottom pin row.  That point is the one raster
+    position of the two edges that never carries a slot - a slot needs
+    ``slot_offset + slot_length / 2`` of clearance from the corner, which with
+    any sane numbers is more than ``pin_offset`` - so the X is cut into free
+    foil.
+    """
+    if not (params.slots and params.marker):
+        return None
+    return (x + params.pin_offset, y + params.pin_offset)
 
 
 def _datum(x: float, y: float, w: float, h: float, params: LayoutParams,
@@ -541,6 +589,8 @@ def pack(sides: list[Side], config: Config) -> Layout:
             # The corner the piece is pushed into (a mirrored side has it at the
             # board's physical bottom-right).
             datum_corner=(cx, cy),
+            # The X that says which corner that is (slots datum, marker on).
+            marker=_marker(cx, cy, params),
         )
         # Cells that fit nowhere are drawn outside the stencil (see the report).
         area.overflow = index in overflow_set
@@ -755,12 +805,16 @@ class _Cover:
     Every opening - an obround slot or a round dowel hole - is stored as a
     segment plus a radius and bucketed by a raster at least as coarse as the
     largest of them, so a point only has to be tested against the openings in
-    its own bucket.
+    its own bucket.  An X marker is covered by its bounding square (the two
+    strokes plus their width, :func:`marker_half`): a dot anywhere in there
+    sits in or right beside the X, so it is dropped as well.
     """
 
     def __init__(self, areas: list[Area], params: LayoutParams) -> None:
         shapes: list[tuple[float, float, float, float, float]] = []
+        squares: list[tuple[float, float, float, float]] = []
         biggest = 0.0
+        half = marker_half(params)
         for area in areas:
             for cx, cy, w, h in area.slots:
                 r = min(w, h) / 2.0
@@ -772,27 +826,38 @@ class _Cover:
                 for hx, hy in area.holes:
                     shapes.append((hx, hy, hx, hy, r))
                     biggest = max(biggest, params.hole_dia)
+            if area.marker is not None and half > 0.0:
+                mx, my = area.marker
+                squares.append((mx - half, my - half, mx + half, my + half))
+                biggest = max(biggest, 2.0 * half)
         self.cell = max(biggest, 1.0)
         self.buckets: dict[tuple[int, int], list[tuple[float, float, float, float, float]]] = {}
+        self.squares: dict[tuple[int, int], list[tuple[float, float, float, float]]] = {}
         for shape in shapes:
             ax, ay, bx, by, r = shape
-            i0 = int(math.floor((min(ax, bx) - r) / self.cell))
-            i1 = int(math.floor((max(ax, bx) + r) / self.cell))
-            j0 = int(math.floor((min(ay, by) - r) / self.cell))
-            j1 = int(math.floor((max(ay, by) + r) / self.cell))
-            for i in range(i0, i1 + 1):
-                for j in range(j0, j1 + 1):
-                    self.buckets.setdefault((i, j), []).append(shape)
+            self._bucket(self.buckets, min(ax, bx) - r, min(ay, by) - r,
+                         max(ax, bx) + r, max(ay, by) + r, shape)
+        for square in squares:
+            self._bucket(self.squares, *square, square)
+
+    def _bucket(self, target: dict, x0: float, y0: float, x1: float, y1: float,
+                item) -> None:
+        """File ``item`` under every bucket its bounding box touches."""
+        for i in range(int(math.floor(x0 / self.cell)),
+                       int(math.floor(x1 / self.cell)) + 1):
+            for j in range(int(math.floor(y0 / self.cell)),
+                           int(math.floor(y1 / self.cell)) + 1):
+                target.setdefault((i, j), []).append(item)
 
     def covers(self, x: float, y: float) -> bool:
-        """Is ``(x, y)`` inside one of the datum openings?"""
-        if not self.buckets:
+        """Is ``(x, y)`` inside a datum opening or an X marker's square?"""
+        if not self.buckets and not self.squares:
             return False
-        bucket = self.buckets.get((int(math.floor(x / self.cell)),
-                                   int(math.floor(y / self.cell))))
-        if not bucket:
-            return False
-        return any(_in_obround(x, y, *shape) for shape in bucket)
+        key = (int(math.floor(x / self.cell)), int(math.floor(y / self.cell)))
+        if any(x0 <= x <= x1 and y0 <= y <= y1
+               for x0, y0, x1, y1 in self.squares.get(key, ())):
+            return True
+        return any(_in_obround(x, y, *shape) for shape in self.buckets.get(key, ()))
 
 
 class _Dedupe:
@@ -841,6 +906,32 @@ def _crowded(params: LayoutParams) -> str:
     if first and first[0] < params.slot_inner + params.slot_length / 2.0 - _FIT_EPS:
         return ("the first raster position is so close to the corner that the "
                 "first bottom slot and the first left slot overlap there")
+    return ""
+
+
+def _marker_trouble(layout: Layout) -> str:
+    """Why the X marker does not fit where it is cut, or ``""``.
+
+    Only reachable with hand-set numbers: an X that reaches further than
+    ``pin_offset`` crosses the cell edge, and one long enough to reach the
+    first raster position of an edge runs into that slot.
+    """
+    params = layout.params
+    half = marker_half(params)
+    if half > params.pin_offset + _FIT_EPS:
+        return (f"the {params.marker_size:g} mm X reaches {half:.2f} mm from its "
+                f"centre but is cut only {params.pin_offset:.2f} mm inside the "
+                f"cell edge: it crosses the edge")
+    for area in layout.areas:
+        if area.marker is None:
+            continue
+        mx, my = area.marker
+        for sx, sy, sw, sh in area.slots:
+            if (abs(sx - mx) < (sw + 2.0 * half) / 2.0 - _FIT_EPS
+                    and abs(sy - my) < (sh + 2.0 * half) / 2.0 - _FIT_EPS):
+                return (f"the {params.marker_size:g} mm X at "
+                        f"{_fmt_point((mx, my))} reaches the slot at "
+                        f"{_fmt_point((sx, sy))}")
     return ""
 
 
@@ -923,6 +1014,19 @@ def layout_report(layout: Layout, config: Config) -> str:
                          f"({params.dot_line_gap / 2.0:.2f} mm inside the edge) and stop "
                          f"{params.slot_offset:g} mm short of the neighbouring cell: "
                          f"intended, it frees the foil beside the board for the squeegee")
+        if params.marker:
+            lines.append(f"Marker:  X {params.marker_size:g} mm at the raster point "
+                         f"{params.pin_offset:g} mm inside the datum corner, where the "
+                         f"left pin column meets the bottom pin row (the one raster "
+                         f"point that never carries a slot)")
+            lines.append(f"         two crossed strokes at ±45°, {params.dot_dia:g} mm "
+                         f"wide, reaching {marker_half(params):.2f} mm from the centre: "
+                         f"the orientation of a cut-out piece can be read at a glance")
+            trouble = _marker_trouble(layout)
+            if trouble:
+                lines.append(f"         WARNING: {trouble}")
+        else:
+            lines.append("Marker:  off (no orientation X is cut)")
     elif params.holes:
         lines.append(f"Datum:   holes: ⌀{params.hole_dia:.1f} mm, inset {params.hole_inset:.1f} mm "
                      f"(centres {params.hole_offset:.2f} mm inside the cell edge)")
@@ -962,6 +1066,11 @@ def layout_report(layout: Layout, config: Config) -> str:
                     else "")
             lines.append(f"   datum corner {_fmt_point((dcx, dcy))}"
                          f"   rel {_fmt_point((dcx - bx0, dcy - by0))}{note}")
+            if area.marker is not None:
+                mx, my = area.marker
+                lines.append(f"   marker X ({params.marker_size:g} mm strokes) "
+                             f"{_fmt_point((mx, my))}"
+                             f"   rel {_fmt_point((mx - bx0, my - by0))}")
             bottom, left = _edge_counts(area, params)
             lines.append(f"   slots ({params.slot_width:g} x {params.slot_length:g} mm "
                          f"obround), {bottom} on the bottom edge + {left} on the left "

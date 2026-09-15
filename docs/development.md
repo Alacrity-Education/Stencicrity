@@ -68,7 +68,7 @@ should cover, roughly in order of value:
 | `writer` | a file written and parsed back gives the same geometry; aperture deduplication by `BakedAperture.key()`; arc direction flips under a mirroring transform; `%TD*%` only follows an aperture with attributes. |
 | `pads` | `matches_prefix` on `TP1`/`NT12`/`tp3`/`TPS1`/`T1`; `default_state` for the three cases; `_paste_hits` with an opening that only holds the centroid and with several partial openings; `natural_key` ordering. |
 | `config` | round trip `format_config` -> `load_config`; every warning path keeps the default; the flat legacy format; stale keys survive; `collect_config` drops an open pasted pad and keeps a closed one. |
-| `layout` | `_grid_size` / `_snap_up` / `_snap_down` arithmetic; a two-cell packing's exact coordinates; `_merge` on touching intervals; `_dividers` dropping the block boundary unless `outer_border`; `_dots` count and centring; `fits` at the exact boundary. |
+| `layout` | `_grid_size` / `_snap_up` / `_snap_down` arithmetic; a two-cell packing's exact coordinates; `_merge` on touching intervals; `_dividers` dropping the block boundary unless `outer_border`; `_dots` count and centring; `_slot_offsets` / `_edge_for_slots` on the raster; `marker_strokes` / `marker_half` geometry and `_Cover` dropping a dot inside an X; `fits` at the exact boundary. |
 | `tui` pure helpers | everything above the `_App` class: `cycle_state`, `next_state`, `allowed_state`, `apply_component`, `find_undefined`, `visible_pads`, `wrap_items`, `query_words`, `match_count`, `filter_counts`, `restore_index`, `step_value`, `valid_value`, `parse_number`, `edit_buffer`. These were written to be testable and need no curses. |
 | end to end | one tiny gerber zip through `cli.main(["--batch", "--no-open", "--out", tmp])`, asserting the exit code and that the five output files exist. |
 
@@ -103,10 +103,10 @@ level, so a test host still needs it), and a render test should use a small
 
 ## Adding a layout parameter end to end
 
-Say you want `frame_width`. Seven places, in this order. (The `datum` switch
-and its six `slot_*` numbers went through exactly these steps; grep for
-`slot_pitch` to see one parameter in all seven at once, and for `datum` to see
-a `choice` rather than a number.)
+Say you want `frame_width`. Seven places, in this order. (The `datum` switch,
+its `slot_*` numbers and the `marker` / `marker_size` pair went through exactly
+these steps; grep for `slot_pitch` to see one number in all seven at once, for
+`marker` to see a `bool` and for `datum` to see a `choice`.)
 
 1. **`model.LayoutParams`** - add the field with its default and a comment
    giving the unit. Add a derived property if other code would repeat the same
@@ -158,18 +158,26 @@ a place on that list.
 
 Then re-run the batch smoke check and diff the generated `.stencicrity`.
 
-**A worked example, `slot_pitch`.** `model.LayoutParams` gained
-`slot_pitch = 30.0` (and `slot_offset` dropped to 0.5, `pin_offset` to 3.5 mm);
-`config._LAYOUT_FLOATS` got `("slot_pitch", v > 0)` plus an `_entry()` line, and
-`slot_corner` moved to `_OBSOLETE_LAYOUT_KEYS`; `cli` traded `--slot-corner` for
-`--slot-pitch` in the parser, `_check_args()` and `apply_cli_config()`;
-`tui.LAYOUT_FIELDS` traded the `slot corner distance` row for
-`slot pitch (modular jig raster)` (step 5, minimum 1) and relabelled
-`hole_grid` to `hole grid (holes datum, 0 = off)`; `layout._cell_of` rounds the
-cell up to whole pitches and `_slot_offsets` places one slot per raster
-position along the bottom and left edges; `layout_report()` prints the raster
-and the per-edge slot counts. Docs: this file, `README.md`, `layout.md`,
-`data-model.md`, `pads-and-config.md`, `tui.md` and `render.md`.
+**A worked example, `marker` and `marker_size`.** `model.LayoutParams` gained
+`marker: bool = True` and `marker_size: float = 4.0` (the stroke length of the
+orientation X; its width is `dot_dia`), and `model.Area` an optional `marker`
+centre; `config` got `marker` in `_LAYOUT_BOOLS`, `("marker_size", v > 0)` in
+`_LAYOUT_FLOATS` and one `_entry()` line each in the `[layout]` block; `cli`
+got `--marker` / `--no-marker` (a mutually exclusive pair, both
+`default=None`) and `--marker-size` in the parser, a `_check_args()` row for
+the size and two lines in `apply_cli_config()`; `tui.LAYOUT_FIELDS` got
+`Field("marker", "orientation marker", "bool")` and
+`Field("marker_size", "marker size", "length", "mm", 0.5, 0.5, "gt0")`, both
+listed in `DATUM_ROWS` as `slots` rows so `field_applies()` dims them under the
+other datums; `layout` grew `_marker()`, the public `marker_strokes()` and
+`marker_half()`, the `Area.marker` filled in by `pack()`, the marker squares in
+`_Cover` and the `Marker:` block plus the per-cell `marker X` line in
+`layout_report()`; `cli._write_paste` strokes the X into the paste layer and
+`render` draws it as the opening it is. Docs: this file, `README.md`,
+`layout.md`, `data-model.md`, `pads-and-config.md`, `tui.md` and `render.md`.
+The same seven steps done to a plain number are what `slot_pitch` (20 mm by
+default, with `slot_length` 8 mm) went through, in the commit that retired
+`slot_corner` above.
 
 ## Release process
 

@@ -13,10 +13,10 @@ Pages (tabs in the header, switched with ``1``-``4`` or Tab / Shift-Tab):
    fits / does not fit verdict for every preset.
 4. **Layout** - the layout parameters: gap, the ``datum`` (which alignment
    features every cell gets: ``slots``, ``holes`` or ``none``), the numbers of
-   both datums - the modular jig raster of the slots, the hole grid of the
-   holes - divider dots and the gap between the two dotted lines, outer
-   border, cell order.  The rows of the datum that is not selected are drawn
-   dimmed but stay editable.
+   both datums - the modular jig raster of the slots, their orientation X
+   marker, the hole grid of the holes - divider dots and the gap between the
+   two dotted lines, outer border, cell order.  The rows of the datum that is
+   not selected are drawn dimmed but stay editable.
 
 On the two list pages (Pads and Sides) ``/`` starts a vim like search: every
 printable character is appended to the query and the list is filtered while
@@ -615,6 +615,8 @@ LAYOUT_FIELDS: tuple[Field, ...] = (
           5.0, 1.0, "gt0"),
     Field("slot_web", "slot web (to board)", "length", "mm", 0.5, 0.1, "gt0"),
     Field("pin_dia", "pin diameter", "length", "mm", 0.5, 0.1, "gt0"),
+    Field("marker", "orientation marker", "bool"),
+    Field("marker_size", "marker size", "length", "mm", 0.5, 0.5, "gt0"),
     Field("dot_dia", "dot diameter", "length", "mm", 0.5, 0.1, "gt0"),
     Field("dot_pitch", "dot pitch", "length", "mm", 0.5, 0.1, "gt0"),
     Field("dot_line_gap", "dotted line gap (between touching cells)", "length", "mm",
@@ -636,15 +638,17 @@ DATUM_ROWS: dict[str, str] = {
     "slot_pitch": DATUM_SLOTS,
     "slot_web": DATUM_SLOTS,
     "pin_dia": DATUM_SLOTS,
+    "marker": DATUM_SLOTS,
+    "marker_size": DATUM_SLOTS,
 }
 
 
 def field_applies(field: Field, params) -> bool:
     """Does this row matter for the datum the layout is currently set to?
 
-    A row that does not (the hole rows under ``slots``, the slot rows under
-    ``holes``, both under ``none``) is only drawn dimmed - it can still be
-    stepped and edited.
+    A row that does not (the hole rows under ``slots``, the slot and marker
+    rows under ``holes``, both under ``none``) is only drawn dimmed - it can
+    still be stepped and edited.
     """
     want = DATUM_ROWS.get(field.attr)
     return want is None or want == getattr(params, "datum", None)

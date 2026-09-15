@@ -45,7 +45,15 @@ file to the desktop viewer.
    The ellipse radius is clamped to at least 1 px. `_obround(cx, cy, w, h)`
    builds the stadium polygon — a segment of length `|w - h|` buffered by
    `min(w, h)/2`, a plain circle when the two are equal — which is exactly the
-   shape of the `O` aperture the writer flashes for that slot.
+   shape of the `O` aperture the writer flashes for that slot. A cell that has
+   an `area.marker` also gets its orientation X: `marker_strokes` (imported
+   from `layout`) gives the two `(x0, y0, x1, y1)` segments and
+   `_stroke_shape(x0, y0, x1, y1, dot_dia)` buffers each of them by half the
+   stroke width into a round-ended stroke — the shape a round aperture on
+   `GerberWriter.add_line` produces, so the preview shows the X as it is cut.
+   Both go into `openings` as well, so the X is red like every other opening,
+   `dot_dia` (0.5 mm) wide, sitting `pin_offset` (3.5 mm) inside the datum
+   corner, just inside the orange bracket the next step draws.
 6a. **The jig.** `_draw_datum` draws, on top of the openings, one dashed blue
    ghost circle (`COLOR_PIN`) per entry of `area.pins` — where the fixture pin
    comes up through the foil, through a slot or through a dowel hole, for
@@ -178,14 +186,15 @@ The five masks, in the order they are composited:
 | `copper` | `COLOR_COPPER` `#2e2e2e` | every object of the copper layer |
 | `pads` | `COLOR_PAD` `#5a5a5a` | the geometry of every detected pad, pasted ones included |
 | `ignored` | `COLOR_IGNORE` `#3a5fcd` | closed paste openings and candidates set to `ignore` |
-| `openings` | `COLOR_OPEN` `#ff2a2a` | everything that is cut, alignment slots and dowel holes included |
+| `openings` | `COLOR_OPEN` `#ff2a2a` | everything that is cut, alignment slots, dowel holes and the orientation X included |
 | `undefined` | `COLOR_UNDEFINED` `#ffd000` | candidates still `undefined` |
 
 The `openings` mask is the important one: it holds the active paste objects,
-the pads the user opened, every divider dot and every datum opening — exactly the
-set of shapes that ends up in `stencil-F_Paste.gbr`. Paste openings the user
-closed are not simply left out; they are drawn in the `ignored` blue, so the
-change stays visible against the copper underneath.
+the pads the user opened, every divider dot, every datum opening and the two
+strokes of every orientation X — exactly the set of shapes that ends up in
+`stencil-F_Paste.gbr`. Paste openings the user closed are not simply left out;
+they are drawn in the `ignored` blue, so the change stays visible against the
+copper underneath.
 
 The remaining colours are drawn as lines or text rather than through masks:
 
@@ -291,4 +300,6 @@ pipeline and [data-model.md](data-model.md) for the objects the renderer reads.
 ## Example
 
 `figures/example-preview.png` is the preview rendered from the eight example
-boards with default settings (380 x 280 sheet, slots datum, 20 px/mm).
+boards with the current defaults (slots datum, 20 mm raster, 8 mm slots, X
+markers) on a 420 x 320 sheet, the smallest preset that holds them at the
+default 30 mm spacing.

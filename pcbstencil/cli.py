@@ -119,7 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--slot-width", type=float, default=None, metavar="MM",
                        help="slot size across the cell edge (default 4.5)")
     group.add_argument("--slot-length", type=float, default=None, metavar="MM",
-                       help="slot size along the cell edge (default 12)")
+                       help="slot size along the cell edge (default 8)")
     group.add_argument("--slot-offset", type=float, default=None, metavar="MM",
                        help="cell edge to the slot's outer wall; the slot may "
                             "clip the cell's own dotted line, never the "
@@ -127,13 +127,24 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--slot-pitch", type=float, default=None, metavar="MM",
                        help="raster of the modular jig: slot and pin centres "
                             "along the bottom and left edge sit on it and "
-                            "cells grow to whole multiples of it (default 30)")
+                            "cells grow to whole multiples of it (default 20)")
     group.add_argument("--slot-web", type=float, default=None, metavar="MM",
                        help="foil kept between a slot and the board; cells grow "
                             "until it fits (default 3)")
     group.add_argument("--pin-dia", type=float, default=None, metavar="MM",
                        help="jig pin diameter for the slots datum; the pin "
                             "touches the slot wall nearest the board (default 3)")
+    marker = group.add_mutually_exclusive_group()
+    marker.add_argument("--marker", dest="marker", action="store_const",
+                        const=True, default=None,
+                        help="slots datum: cut an X at the raster point inside "
+                             "the datum corner so the piece's orientation can "
+                             "be read (default)")
+    marker.add_argument("--no-marker", dest="marker", action="store_const",
+                        const=False, help="do not cut the orientation X")
+    group.add_argument("--marker-size", type=float, default=None, metavar="MM",
+                       help="stroke length of the orientation X; its stroke "
+                            "width is --dot-dia (default 4)")
     group.add_argument("--dot-dia", type=float, default=None, metavar="MM",
                        help="divider dot diameter (default 0.5)")
     group.add_argument("--dot-pitch", type=float, default=None, metavar="MM",
@@ -214,6 +225,7 @@ def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
             ("--slot-pitch", args.slot_pitch, lambda v: v > 0, "must be positive"),
             ("--slot-web", args.slot_web, lambda v: v > 0, "must be positive"),
             ("--pin-dia", args.pin_dia, lambda v: v > 0, "must be positive"),
+            ("--marker-size", args.marker_size, lambda v: v > 0, "must be positive"),
             ("--dot-dia", args.dot_dia, lambda v: v > 0, "must be positive"),
             ("--dot-pitch", args.dot_pitch, lambda v: v > 0, "must be positive"),
             ("--dot-line-gap", args.dot_line_gap, lambda v: v >= 0,
@@ -253,6 +265,8 @@ def apply_cli_config(config: Config, args: argparse.Namespace) -> None:
                         ("slot_pitch", args.slot_pitch),
                         ("slot_web", args.slot_web),
                         ("pin_dia", args.pin_dia),
+                        ("marker", args.marker),
+                        ("marker_size", args.marker_size),
                         ("dot_dia", args.dot_dia),
                         ("dot_pitch", args.dot_pitch),
                         ("dot_line_gap", args.dot_line_gap),
@@ -332,10 +346,13 @@ def _write_paste(layout: Layout, path: str, name: str, open_shrink: float) -> st
     Openings of pads the user closed are left out (``side.active_paste_objects``).
     The alignment features come last: one obround slot per jig raster position
     along the bottom and left edge of every cell for the ``slots`` datum, four
-    round holes per cell for ``holes``, nothing for ``none``.
+    round holes per cell for ``holes``, nothing for ``none``; the ``slots``
+    datum also strokes an X into the foil just inside every datum corner
+    (``marker``), so the orientation of a cut-out piece can be read.
     """
     from shapely.affinity import affine_transform
 
+    from .layout import marker_strokes
     from .writer import GerberWriter
 
     writer = GerberWriter("Paste,Top")
@@ -369,6 +386,14 @@ def _write_paste(layout: Layout, path: str, name: str, open_shrink: float) -> st
         for area in layout.areas:
             for x, y in area.holes:
                 writer.add_circle(x, y, layout.params.hole_dia)
+    if any(area.marker is not None for area in layout.areas):
+        writer.comment("--- orientation markers ---")
+        params = layout.params
+        for area in layout.areas:
+            if area.marker is None:
+                continue
+            for x0, y0, x1, y1 in marker_strokes(area.marker, params.marker_size):
+                writer.add_line(x0, y0, x1, y1, params.dot_dia)
     return writer.write(path)
 
 

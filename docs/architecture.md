@@ -3,12 +3,14 @@
 Stencicrity reads the gerber exports of several KiCad projects, places every
 board side on one stencil sheet of an orderable size, copies the solder-paste
 openings over, marks each cell with dotted cut lines and the alignment datum
-(by default obround slots on a 30 mm raster along the bottom and left edges of every cell, or four dowel-pin holes for the legacy jig), asks
-the user what to do with the copper pads the paste layer does not cover, and
-writes a single `F_Paste` gerber (plus a copper reference layer, a zip, a
-preview PNG and a text report). Everything the user decides is stored in a
-hidden `.stencicrity` file next to the gerbers, so the second run over the same
-boards needs no interaction.
+(by default obround slots on a 20 mm raster along the bottom and left edges of
+every cell plus an X inside the datum corner that says which way round the
+piece goes, or four dowel-pin holes for the legacy jig), asks the user what to
+do with the copper pads the paste layer does not cover, and writes a single
+`F_Paste` gerber (plus a copper reference layer, a zip, a preview PNG and a
+text report). Everything the user decides is stored in a hidden `.stencicrity`
+file next to the gerbers, so the second run over the same boards needs no
+interaction.
 
 ## The pipeline
 
@@ -54,7 +56,7 @@ Step by step, with the functions that do the work:
 | 6 | First preview | `render.render_preview(layout, preview_path, px_per_mm=args.px_per_mm, title=name)`, then `render.open_file()` unless `--no-open` | Skipped with a warning when every side is switched off. |
 | 7 | The TUI | `tui.run_tui(all_pads, sides, config, on_preview=…, compute_layout=…, title=…)` | Skipped with `--batch`. The two callbacks are closures over `sides` and `config` defined in `_run`: `compute_layout(cfg)` is `pack(sides, cfg or config)` and `on_preview(pad, do_open)` re-packs, re-renders and optionally opens the PNG. Afterwards the configuration is saved again; a user who quit instead of generating gets exit code 1. |
 | 8 | Final pack | `layout.pack(final_sides, config)` | `final_sides` are the enabled sides that have at least one opening; sides with none are dropped and reported, and if nothing is left the run returns 2. This is a *second* packing over a possibly shorter list, so the final layout can differ from the one in the TUI. |
-| 9 | Write | `cli._write_paste`, `cli._write_copper`, `cli._write_outline`, `cli._zip_files`, `render.render_preview`, `layout.layout_report`, `cli._summary` | The paste layer carries the surviving paste objects, the opened pads, the divider dots and the datum: obround slots (`writer.add_obround` over `area.slots`) for `datum = slots`, round holes (`writer.add_circle` over `area.holes`) for `datum = holes`, nothing for `none`; the report is `layout_report()` followed by the same summary that is printed on stdout. |
+| 9 | Write | `cli._write_paste`, `cli._write_copper`, `cli._write_outline`, `cli._zip_files`, `render.render_preview`, `layout.layout_report`, `cli._summary` | The paste layer carries the surviving paste objects, the opened pads, the divider dots and the datum: obround slots (`writer.add_obround` over `area.slots`) plus, with `marker` on, the two `dot_dia` strokes of the orientation X (`writer.add_line` over `layout.marker_strokes(area.marker, …)`) for `datum = slots`, round holes (`writer.add_circle` over `area.holes`) for `datum = holes`, nothing for `none`; the report is `layout_report()` followed by the same summary that is printed on stdout. |
 
 With `--batch` the TUI is skipped, undefined pads stay closed, and two
 warnings are printed instead: how many pads were left undefined, and whether
@@ -116,9 +118,13 @@ writes it atomically through a temporary file in the same directory. Depends on
 **`pcbstencil/layout.py`** - the packer. `pack(sides, config) -> Layout` orders
 the enabled sides, turns each into a cell, places the cells with a MaxRects bin
 packer under three heuristics, centres the block, computes the divider lines,
-the dots and the datum features (slots or dowel holes, plus the jig pin
-centres). `layout_report(layout, config)` renders the text
-report. Depends on `model` and `pads` (for `natural_key`) - no shapely.
+the dots and the datum features (slots or dowel holes, the jig pin centres and,
+for the slots datum, the centre of each cell's orientation X).
+`marker_strokes()` / `marker_half()` turn that centre into the two crossed
+strokes the writer and the renderer draw and into the square they cut, which is
+what keeps divider dots out of the X. `layout_report(layout, config)` renders
+the text report. Depends on `model` and `pads` (for `natural_key`) - no
+shapely.
 See [layout.md](layout.md).
 
 **`pcbstencil/render.py`** - the preview. `render_preview(layout, path, …)`
