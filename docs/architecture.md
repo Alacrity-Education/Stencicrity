@@ -198,7 +198,7 @@ except KeyboardInterrupt:               # -> 1
 | Code | When |
 | --- | --- |
 | 0 | The stencil was generated. |
-| 1 | The user left the TUI with `q` or Esc (the configuration is still saved), or Ctrl-C anywhere. |
+| 1 | The user left the TUI with `q` (the configuration is still saved), or Ctrl-C anywhere. |
 | 2 | No gerber projects found; no side has paste openings or pads to decide; no enabled side has a single opening; any `GerberError` or `OSError`; and, from argparse itself, a bad command line or a value rejected by `_check_args()`. |
 
 Warnings go to stderr through the local `warn()` helper, which flushes stdout

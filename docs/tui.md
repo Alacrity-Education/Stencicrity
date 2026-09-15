@@ -20,8 +20,9 @@ be exercised without a terminal. `_App` only draws and dispatches keys.
 | group | functions | what they do |
 | --- | --- | --- |
 | pad states | `cycle_state`, `next_state`, `allowed_state`, `count_states`, `component_pads`, `apply_component`, `find_undefined`, `visible_pads` | which state a key gives a pad, which states a pad may take, and which pads are listed |
-| text | `clip`, `_col`, `fmt_mm`, `ellipsis`, `_wrap`, `wrap_items`, `wrap_text` | column padding, number formatting and footer line breaking |
+| text | `clip`, `_col`, `fmt_mm`, `ellipsis`, `_wrap`, `wrap_items`, `wrap_text`, `page_items` | column padding, number formatting, footer line breaking and the key-help items of a page |
 | search | `query_words`, `match_count`, `matches`, `filter_counts`, `filter_rows`, `full_matches`, `match_summary`, `search_char`, `restore_index` | the whole filter: matching, ranking, the sub-header tail and cursor preservation |
+| key decisions | `search_action`, `escape_action` | what a key does while the search is open, and which of the four things Esc undoes |
 | rows | `pad_position`, `board_text`, `pad_fields`, `side_fields`, `row_segments`, `format_row`, `pads_header`, `side_row`, `orientation_size`, `preset_row`, `fit_segments`, `fit_line` | the exact text of every row and of the status line |
 | layout fields | `Field`, `LAYOUT_FIELDS`, `DATUM_ROWS`, `field_applies`, `value_text`, `valid_value`, `step_value`, `parse_number`, `toggle_field`, `format_field_row`, `edit_buffer` | the editable parameters of the Layout page, their validation and which of them the current datum applies to |
 
@@ -55,12 +56,16 @@ disappears because the key help is long. `_draw` then calls `_draw_tabs`, writes
 the sub-header, calls `_scroll` and delegates the body to `_draw_pads`,
 `_draw_sides`, `_draw_stencil` or `_draw_layout`.
 
-`_handle` dispatches the global keys first (search, page switching, quit,
-preview, `g`, movement) and hands anything left to `_handle_pads`,
+`_handle` dispatches the global keys first (Esc, search, page switching, quit,
+preview, `w`, movement, `g`/`G`) and hands anything left to `_handle_pads`,
 `_handle_sides`, `_handle_stencil` or `_handle_layout`. Inline editing and
 search mode short-circuit the whole dispatch at the top: while `self.editing` is
 not `None` every key goes to `_edit_key`, and while `self.search` is not `None`
 every key goes to `_search_key`.
+
+Because a finished search can leave a filter behind, the page handlers work on
+the row under the cursor (`_current_row()`), never on an index into the
+unfiltered list.
 
 The cursor and the scroll offset are per page: `self.cursor` and `self.top` are
 four-element lists, so switching pages and coming back keeps the position.
@@ -197,16 +202,17 @@ Global, handled before the page dispatch:
 
 | key | action |
 | --- | --- |
-| `/` | start a search (Pads and Sides pages only) |
+| Esc | cancel an edit, else a pending confirmation, else the filter — never quits (`escape_action`) |
+| `/` | start a fresh, empty search (Pads and Sides pages only) |
 | `1` `2` `3` `4` | go to that page |
 | Tab | next page; Shift-Tab (`KEY_BTAB` or 353) previous page |
-| `q`, Esc | quit without generating |
+| `q` | quit without generating |
 | `p` | re-render the preview |
 | `v` | re-render the preview and open it in the viewer |
-| `g` | generate — but only when the page is *not* Pads |
+| `w` | generate, on *every* page |
 | `↑` `k`, `↓` `j` | move one row |
 | PgUp / PgDn | move by window height minus 5 rows |
-| Home / End | first / last row |
+| Home / End, `g` / `G` | first / last row, on every page |
 
 Pads page:
 
@@ -217,8 +223,7 @@ Pads page:
 | `a` | apply the cursor pad's state to every pad of the same component |
 | `n` / `N` | next / previous undefined candidate, wrapping around |
 | `*` | show all pads, including the ones with paste |
-| `g` / `G` | jump to the first / last row (not generate) |
-| Enter | generate |
+| Enter | nothing — `w` generates |
 
 Sides page:
 
@@ -243,23 +248,31 @@ Layout page:
 | space | toggle a switch or cycle a choice (`datum`, `sort`); on a number it only prints a hint |
 | `e`, Enter | start editing the number inline; on a choice row it cycles instead |
 
-Two of these deviate from the obvious: on the Pads page `g` and `G` are Home and
-End because Enter already generates there, and `o` opens a pad on the Pads page
-but toggles the orientation on the Stencil page. `N` is "previous undefined" on
-Pads and "all sides off" on Sides.
+Two of these deviate from the obvious: `o` opens a pad on the Pads page but
+toggles the orientation on the Stencil page, and `N` is "previous undefined" on
+Pads and "all sides off" on Sides. Everything that leaves the TUI is one key on
+every page: `w` generates, `q` quits, and Esc only ever *undoes* something.
 
-The footer text comes from `PAGE_ITEMS` (one tuple of `"key description"` items
-per page), `EDIT_ITEMS` while editing and `SEARCH_ITEMS` while searching.
-`PAGE_KEYS`, `EDIT_KEYS` and `SEARCH_KEYS` are the same items joined with two
+The footer text comes from `page_items(page, filtered)` — `PAGE_ITEMS[page]`
+(one tuple of `"key description"` items per page) plus `FILTER_ITEM`
+(`esc clear filter`, inserted behind `/ search`) while a filter is active —
+from `EDIT_ITEMS` while editing and from `SEARCH_ITEMS` while searching.
+`PAGE_KEYS`, `EDIT_KEYS` and `SEARCH_KEYS` are the plain items joined with two
 spaces into a single line, kept for callers and tests that want the help as one
-string.
+string. Every page's plain line fits into 139 columns, which is what keeps the
+footer at one line on a wide terminal; with the filter item the Pads help needs
+two.
 
 ## Search
 
-`/` starts a search, but only on the two list pages (`_searchable`). Search mode
-swallows every key: the printable ones extend the query, Backspace shortens it,
-the arrows and PgUp/PgDn/Home/End still move the cursor, and Enter or Esc leaves.
-Nothing else — you cannot toggle a side or set a pad state while searching.
+`/` starts a search, but only on the two list pages (`_searchable`). It always
+starts empty: a filter that is still on the list is dropped at once, so typing
+replaces it live instead of narrowing it. Search mode swallows every key —
+`search_action(key)` says which of them does what: the printable ones extend
+the query (`search_char`), Backspace shortens it, the arrows and
+PgUp/PgDn/Home/End still move the cursor, Enter leaves the search *keeping* the
+filter and Esc leaves it dropping the filter. Nothing else — you cannot toggle
+a side or set a pad state while searching.
 
 The matching is word based:
 
@@ -293,8 +306,35 @@ fallback)` walks the list looking for the very same object and falls back to a
 clamped index when it is gone. `_start_search` remembers the focused row as
 `search_anchor` before filtering; every keystroke re-filters with
 `_apply_filter(current_row)`, so the cursor follows its row through the
-re-ordering; `_end_search` drops the filter and puts the cursor back on the row
-it was on — or on the anchor when nothing matched.
+re-ordering; `_end_search(keep_filter)` puts the cursor back on the row it was
+on — or on the anchor when nothing matched.
+
+### The filter the search leaves behind
+
+Enter ends the search but keeps its query as the filter of that page, so the
+list stays filtered and ranked (full matches still bold) while the normal keys
+work on the rows that are left. The state is per page, like `cursor` and `top`:
+
+| attribute | what it holds |
+| --- | --- |
+| `search` | the query being typed, or `None` when the search is closed |
+| `filters[page]` | the query Enter left on that page, or `None` |
+| `_filtered[page]` / `_counts[page]` | the rows that query keeps and their match counts |
+| `query` (property) | `search` while searching, else `filters[page]` — what the sub-header, the ranking and `_is_full` read |
+| `filtered` / `match_counts` (properties) | the two lists of the *current* page |
+
+`_filter_page(page, keep, move=...)` recomputes one page's filtered rows,
+`_apply_filter` is the current page's shorthand, and `_rows_list()` returns
+`_filtered[page]` when there is one. The filter is re-applied when its *base*
+list changes — `_sync_visible` does it for the Pads page after a side toggle or
+`*`, and `_goto` does it on the way into a page — but never after a mere state
+change: pressing `o` on a pad the filter matched by its state leaves the row
+where it is, so a filtered list can be worked through from top to bottom.
+
+A blank query is never kept (it filters nothing); a query that matched nothing
+is, and then Esc — `_clear_filter` — puts the cursor back on `search_anchor`,
+the row the search started from. Otherwise Esc keeps the cursor on the focused
+row, like vim's `:noh`.
 
 `search_char(key)` accepts only printable ASCII (32 to 126), so control keys and
 everything curses reports as a `KEY_*` code (>= 256) never end up in the query.
@@ -322,8 +362,11 @@ a decision even in the all-pads view.
 
 `_sync_visible(keep)` recomputes the visible list. It caches a signature of
 `(show_all, the keys of the enabled sides)` and does nothing when that has not
-changed, and it returns immediately while a search is active, because the cursor
-then indexes the filtered list rather than `self.visible`.
+changed, and it returns immediately while a search is active, because the query
+is still being typed. When the list really did change it re-applies the filter
+the Pads page carries to the new base list and then puts the cursor back on
+`keep` (the pad it was on) by identity, so `*` and a side toggle both filter
+what is listed now.
 
 ## Footer wrapping
 
@@ -381,13 +424,15 @@ the TUI never imports the packer or the renderer itself.
   re-packs the live layout and drops the preset cache, which the loop refills
   the next time the Stencil page is drawn.
 
-Generating is guarded when the block does not fit. `_confirm(keyname, pending)`
-returns `True` at once when the layout fits or is unknown; otherwise it stores
-the key in `self.pending`, shows `NOFIT_WARNING` ("layout does not fit the
-stencil — press again to generate anyway") and returns `None`, so the loop keeps
-running. Pressing the same key again — Enter on the Pads page, `g` elsewhere —
-then generates. `pending` is read and cleared at the top of every other key, so
-any key in between cancels the confirmation.
+Generating is `w`, on every page, and it is guarded when the block does not fit.
+`_confirm("w", pending)` returns `True` at once when the layout fits or is
+unknown; otherwise it stores the key in `self.pending`, shows `NOFIT_WARNING`
+("layout does not fit the stencil — press w again to generate anyway") and
+returns `None`, so the loop keeps running. A second `w` then generates.
+`pending` is read and cleared at the top of every other key, so any key in
+between cancels the confirmation — Esc says so explicitly ("generate
+cancelled") and does nothing else, which is why it is checked before the
+filter in `escape_action`.
 
 `_preview` sets the status to "rendering…" and redraws *before* calling back,
 because a full render takes about a second (see [render.md](render.md)), then

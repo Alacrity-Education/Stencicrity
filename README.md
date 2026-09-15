@@ -46,9 +46,9 @@ stencicrity.py` works as well.
    `stencil-out/stencil-preview.png`, which opens in the desktop viewer.
 4. The TUI. Four pages: Pads, Sides, Stencil, Layout. Every change re-packs
    the sheet; `p` re-renders the preview so the viewer shows the current state.
-5. Generation. Enter on the Pads page or `g` on any other page writes the
-   gerbers, the zip, the final preview and the report into `stencil-out/`.
-   `q` leaves without generating; the configuration is saved anyway.
+5. Generation. `w` on any page writes the gerbers, the zip, the final preview
+   and the report into `stencil-out/`. `q` leaves without generating; the
+   configuration is saved anyway.
 
 ## The sheet
 
@@ -263,6 +263,7 @@ footer lists the keys of the current page.
 | key | action |
 | --- | --- |
 | `↑`/`↓`, `j`/`k`, `PgUp`/`PgDn`, `Home`/`End` | move |
+| `g` / `G` | first / last row, on every page |
 | `space` | Pads: cycle undefined → open → ignore → open ...; Sides: toggle; Stencil: pick; Layout: flip a switch, cycle the datum (slots → holes → none) or the sort order |
 | `o` / `i` | Pads: set open / ignore (`o` on the Stencil page toggles the orientation) |
 | `a` | Pads: apply the current pad's state to every pad of the same component |
@@ -270,12 +271,12 @@ footer lists the keys of the current page.
 | `*` | Pads: show all pads, including the ones with paste |
 | `A` / `N` | Sides: all on / all off |
 | `+` / `-` (also `→` / `←`) | Layout: step a number by 0.5 mm (1 mm for the hole grid, 5 mm for the slot pitch), or cycle the datum |
-| `e` or `Enter` | Layout: type a value (typing replaces, Backspace edits, Enter accepts, Esc cancels); on the datum row it cycles |
+| `e` | Layout: type a value (typing replaces, Backspace edits, Enter accepts, Esc cancels); on the datum row it cycles |
+| `Enter` | Sides: toggle the side; Stencil: pick the size; Layout: edit the value like `e`; Pads: nothing |
 | `p` / `v` | re-render the preview / re-render and open it |
-| `Enter` on Pads, `g` elsewhere | generate; asks a second time when the layout does not fit |
-| `q` or `Esc` | quit without generating; the configuration is saved |
-
-On the Pads page `g` and `G` jump to the first and last row instead.
+| `w` | generate, on every page; when the layout does not fit it asks once more ("press w again") and any other key cancels that |
+| `Esc` | cancel an inline edit, else cancel a pending `w`, else clear an active filter — and nothing at all when there is none of those; Esc never quits |
+| `q` | quit without generating; the configuration is saved |
 
 `/` starts a search on the Pads and Sides pages, vim style: the query is typed
 into the footer and the list filters while you type. A row is kept when any
@@ -283,8 +284,13 @@ word of the query is a substring of any of its fields (reference, pin,
 project, side, function, shape, state, position; pasted pads also answer to
 `paste`). Rows are ranked by how many words they match, rows that match every
 word are shown bold, and the sub-header says how many rows are shown and how
-many are full matches. Enter or Esc leaves the search, clears the filter and
-keeps the cursor on the row it was on.
+many are full matches. Enter leaves the search but *keeps* the filter: the
+list stays filtered and ranked, and every key above works on the rows that are
+left — toggling a side or `*` re-applies the filter to the list that results.
+Esc leaves the search and clears the filter at once, and clears a kept filter
+later on, the way vim's `:noh` drops a highlight; either way the cursor stays
+on the row it was on. `/` always starts a new, empty search, so typing over an
+active filter replaces it, and every page keeps its own filter.
 
 ## Output files
 

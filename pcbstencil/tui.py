@@ -23,8 +23,15 @@ printable character is appended to the query and the list is filtered while
 you type (a row survives when any whitespace separated word of the query is a
 substring of any of its fields).  The matches are ordered by how many
 distinct words of the query they match - the best matches first - and a row
-that matches *every* word is drawn bold.  Enter or Esc leaves the search,
-clears the filter and keeps the cursor on the item it was on.
+that matches *every* word is drawn bold.  Enter leaves the search but *keeps*
+the filter: the list stays filtered and ranked and every normal key works on
+the rows that are left.  Esc leaves the search and clears the filter at once.
+Either way the cursor stays on the row it was on.
+
+``w`` generates on every page - twice when the layout does not fit - and ``q``
+quits.  Esc never leaves the program: it cancels an inline edit, then a
+pending generate confirmation, then an active filter, and does nothing when
+there is none of those.  ``g`` / ``G`` are the first / last row on every page.
 
 Everything above :class:`_App` is pure and unit testable: state cycling, row
 formatting, field stepping/validation, the search matching/filtering, the
@@ -90,17 +97,20 @@ _COL_SIDE_NAME = 30
 # terminal.
 PAGE_ITEMS: tuple[tuple[str, ...], ...] = (
     ("↑↓/jk move", "/ search", "space cycle", "o open", "i ignore", "a component",
-     "n/N undef", "* all pads", "p/v preview", "enter generate",
+     "n/N undef", "* all pads", "p/v preview", "w generate",
      "1-4/tab page", "q quit"),
     ("↑↓ move", "/ search", "space/enter toggle side", "A all", "N none",
-     "g generate", "p/v preview", "1-4/tab page", "q quit"),
-    ("↑↓ move", "space/enter pick size", "o orientation", "g generate",
+     "w generate", "p/v preview", "1-4/tab page", "q quit"),
+    ("↑↓ move", "space/enter pick size", "o orientation", "w generate",
      "p/v preview", "1-4/tab page", "q quit"),
-    ("↑↓ move", "+/- step", "space toggle", "e/enter edit", "g generate",
+    ("↑↓ move", "+/- step", "space toggle", "e/enter edit", "w generate",
      "p/v preview", "1-4/tab page", "q quit"),
 )
 EDIT_ITEMS = ("type a number", "backspace", "enter accept", "esc cancel")
-SEARCH_ITEMS = ("type to filter", "backspace", "↑↓ move", "enter/esc leave the search")
+SEARCH_ITEMS = ("type to filter", "backspace", "↑↓ move", "enter keep filter",
+                "esc clear")
+#: Added to the page help while a filter is active (Esc drops it again).
+FILTER_ITEM = "esc clear filter"
 
 ITEM_SEP = "  "                      # between two key-help items on one line
 FOOTER_LINES = 2                     # the key help never grows past two lines
@@ -109,7 +119,14 @@ FOOTER_LINES = 2                     # the key help never grows past two lines
 PAGE_KEYS = tuple(ITEM_SEP.join(items) for items in PAGE_ITEMS)
 EDIT_KEYS = ITEM_SEP.join(EDIT_ITEMS)
 SEARCH_KEYS = ITEM_SEP.join(SEARCH_ITEMS)
-NOFIT_WARNING = "layout does not fit the stencil — press again to generate anyway"
+NOFIT_WARNING = "layout does not fit the stencil — press w again to generate anyway"
+
+# Key codes that mean the same thing wherever they are pressed.
+ENTER_KEYS = (10, 13, curses.KEY_ENTER)
+BACKSPACE_KEYS = (curses.KEY_BACKSPACE, 8, 127)
+KEY_ESC = 27
+KEY_TAB = 9
+KEY_GENERATE = ord("w")              # confirm and generate, on every page
 
 # Colour pair numbers (only used when the terminal has colours).
 _PAIR_UNDEFINED = 1
@@ -308,6 +325,24 @@ def wrap_text(text: str, width: int, max_lines: int = 2) -> list[str]:
     return _wrap(text.split(), width, max_lines, " ")
 
 
+def page_items(page: int, filtered: bool = False) -> list[str]:
+    """The footer key help of ``page``; ``esc clear filter`` when one is active.
+
+    The item is put right behind ``/ search`` (the only pages that can be
+    filtered are the ones that offer the search), so the two filter keys sit
+    next to each other.
+    """
+    items = list(PAGE_ITEMS[page])
+    if not filtered:
+        return items
+    for index, item in enumerate(items):
+        if item.startswith("/ "):
+            items.insert(index + 1, FILTER_ITEM)
+            return items
+    items.append(FILTER_ITEM)
+    return items
+
+
 # --------------------------------------------------------------------------- #
 # Pure helpers: search
 # --------------------------------------------------------------------------- #
@@ -408,6 +443,70 @@ def search_char(key: int) -> Optional[str]:
     if 32 <= key < 127:
         return chr(key)
     return None
+
+
+#: What one key does in search mode (:func:`search_action`).
+SEARCH_KEEP = "keep"                 # Enter: leave the search, keep the filter
+SEARCH_CLEAR = "clear"               # Esc: leave the search and drop the filter
+SEARCH_BACKSPACE = "backspace"
+SEARCH_CHAR = "char"                 # a printable character, into the query
+SEARCH_IGNORE = "ignore"
+SEARCH_MOVES = {
+    curses.KEY_UP: "up",
+    curses.KEY_DOWN: "down",
+    curses.KEY_PPAGE: "page-up",
+    curses.KEY_NPAGE: "page-down",
+    curses.KEY_HOME: "first",
+    curses.KEY_END: "last",
+}
+
+#: What Esc does outside the search (:func:`escape_action`).
+ESC_EDIT = "edit"                    # cancel the inline edit
+ESC_SEARCH = "search"                # leave the search, clearing the filter
+ESC_PENDING = "pending"              # cancel a pending generate confirmation
+ESC_FILTER = "filter"                # clear the filter that is still active
+ESC_NONE = "none"                    # nothing at all - Esc never quits
+
+
+def search_action(key: int) -> str:
+    """What ``key`` does while the search is open.
+
+    ``"keep"`` (Enter: leave the search and keep the filter on the list),
+    ``"clear"`` (Esc: leave it and drop the filter), ``"backspace"``, one of
+    the movements of :data:`SEARCH_MOVES`, ``"char"`` when the key is typed
+    into the query, or ``"ignore"``.
+    """
+    if key in ENTER_KEYS:
+        return SEARCH_KEEP
+    if key == KEY_ESC:
+        return SEARCH_CLEAR
+    if key in BACKSPACE_KEYS:
+        return SEARCH_BACKSPACE
+    if key in SEARCH_MOVES:
+        return SEARCH_MOVES[key]
+    if search_char(key) is not None:
+        return SEARCH_CHAR
+    return SEARCH_IGNORE
+
+
+def escape_action(editing: bool = False, searching: bool = False,
+                  pending: bool = False, filtered: bool = False) -> str:
+    """What Esc does, in priority order - and it never quits the program.
+
+    An inline edit is cancelled first, then the search (which drops its
+    filter), then a pending "press w again" confirmation, then the filter that
+    a finished search left on the list.  With none of those Esc does nothing
+    at all: ``"none"``.
+    """
+    if editing:
+        return ESC_EDIT
+    if searching:
+        return ESC_SEARCH
+    if pending:
+        return ESC_PENDING
+    if filtered:
+        return ESC_FILTER
+    return ESC_NONE
 
 
 def restore_index(rows: Sequence[_Row], item: Optional[_Row],
@@ -725,7 +824,7 @@ def edit_buffer(buffer: str, key: int) -> Optional[str]:
 
     Returns the new buffer, or None when the key is not an editing key.
     """
-    if key in (curses.KEY_BACKSPACE, 8, 127):
+    if key in BACKSPACE_KEYS:
         return buffer[:-1]
     if 0 <= key < 0x110000:
         char = chr(key)
@@ -763,11 +862,36 @@ class _App:
         self.editing: Optional[str] = None      # inline edit buffer
         self.edit_fresh = False                 # buffer still holds the untouched prefill
         self.search: Optional[str] = None       # search query (None: not searching)
-        self.filtered: Optional[list] = None    # the rows the query keeps
-        self.match_counts: Optional[list[int]] = None   # words matched per filtered row
+        # The filter a finished search left behind, per page: Enter keeps it,
+        # Esc drops it.  Only the two list pages can ever have one.
+        self.filters: list[Optional[str]] = [None, None, None, None]
+        self._filtered: list[Optional[list]] = [None, None, None, None]
+        self._counts: list[Optional[list[int]]] = [None, None, None, None]
         self.search_anchor = None               # row focused when the search started
         self.colors = False
         self._sync_visible()
+
+    # -- the filter -------------------------------------------------------- #
+    @property
+    def query(self) -> Optional[str]:
+        """The query the current page is filtered by (None: no filter).
+
+        While the search is open that is the query being typed; afterwards it
+        is what Enter kept.
+        """
+        if self.search is not None:
+            return self.search
+        return self.filters[self.page]
+
+    @property
+    def filtered(self) -> Optional[list]:
+        """The rows the query keeps on the current page (None: no filter)."""
+        return self._filtered[self.page]
+
+    @property
+    def match_counts(self) -> Optional[list[int]]:
+        """How many words of the query every filtered row matched."""
+        return self._counts[self.page]
 
     # -- state ------------------------------------------------------------- #
     def _enabled_pads(self) -> list[Pad]:
@@ -775,7 +899,12 @@ class _App:
         return visible_pads(self.pads, self.sides, True)
 
     def _sync_visible(self, keep: Optional[Pad] = None) -> None:
-        """Recompute the visible pad list, keeping the cursor on the same pad."""
+        """Recompute the visible pad list, keeping the cursor on the same pad.
+
+        An active filter is re-applied to the new base list, so toggling a side
+        or ``*`` filters the pads that are listed now; the cursor follows its
+        pad by identity into whatever list it ends up in.
+        """
         if self.search is not None:
             return          # while searching the cursor indexes the filtered list
         signature = (self.show_all,
@@ -783,19 +912,15 @@ class _App:
         if signature == self._side_signature and self.visible:
             return
         current = keep
-        if current is None and 0 <= self.cursor[PAGE_PADS] < len(self.visible):
-            current = self.visible[self.cursor[PAGE_PADS]]
+        if current is None:
+            rows = self._page_rows(PAGE_PADS)
+            if 0 <= self.cursor[PAGE_PADS] < len(rows):
+                current = rows[self.cursor[PAGE_PADS]]
         self._side_signature = signature
         self.visible = visible_pads(self.pads, self.sides, self.show_all)
-        index = 0
-        if current is not None:
-            for i, pad in enumerate(self.visible):
-                if pad is current:
-                    index = i
-                    break
-            else:
-                index = min(self.cursor[PAGE_PADS], max(0, len(self.visible) - 1))
-        self.cursor[PAGE_PADS] = max(0, min(index, max(0, len(self.visible) - 1)))
+        rows = self._filter_page(PAGE_PADS)
+        fallback = self.cursor[PAGE_PADS] if current is not None else 0
+        self.cursor[PAGE_PADS] = restore_index(rows, current, fallback)
 
     def _refresh_layout(self) -> None:
         try:
@@ -822,21 +947,28 @@ class _App:
         self._refresh_layout()
         self.presets = None
 
-    def _base_rows(self) -> Sequence:
-        """Every row of the current page, search filter *not* applied."""
-        if self.page == PAGE_PADS:
+    def _base_rows_of(self, page: int) -> Sequence:
+        """Every row of ``page``, the filter *not* applied."""
+        if page == PAGE_PADS:
             return self.visible
-        if self.page == PAGE_SIDES:
+        if page == PAGE_SIDES:
             return self.sides
-        if self.page == PAGE_STENCIL:
+        if page == PAGE_STENCIL:
             return STENCIL_SIZES
         return LAYOUT_FIELDS
 
+    def _base_rows(self) -> Sequence:
+        """Every row of the current page, the filter *not* applied."""
+        return self._base_rows_of(self.page)
+
+    def _page_rows(self, page: int) -> Sequence:
+        """The rows ``page`` shows: the filtered ones when it has a filter."""
+        rows = self._filtered[page]
+        return self._base_rows_of(page) if rows is None else rows
+
     def _rows_list(self) -> Sequence:
-        """The rows the user sees: the filtered ones while searching."""
-        if self.search is not None and self.filtered is not None:
-            return self.filtered
-        return self._base_rows()
+        """The rows the user sees on the current page."""
+        return self._page_rows(self.page)
 
     def _rows(self) -> int:
         return len(self._rows_list())
@@ -912,14 +1044,14 @@ class _App:
 
     # -- search state ------------------------------------------------------ #
     def _query_words(self) -> int:
-        """How many distinct words the query has (0 when not searching)."""
-        return len(query_words(self.search)) if self.search is not None else 0
+        """How many distinct words the query has (0 without a filter)."""
+        return len(query_words(self.query)) if self.query is not None else 0
 
     def _full_count(self) -> int:
         """How many filtered rows match every word of the query."""
-        if self.search is None or not self.match_counts:
+        if self.query is None or not self.match_counts:
             return 0
-        return full_matches(self.match_counts, self.search)
+        return full_matches(self.match_counts, self.query)
 
     def _is_full(self, index: int) -> bool:
         """Does the filtered row at ``index`` match every word of the query?"""
@@ -1007,7 +1139,7 @@ class _App:
             return [self._search_prompt(), *SEARCH_ITEMS]
         if self.editing is not None:
             return list(EDIT_ITEMS)
-        return list(PAGE_ITEMS[self.page])
+        return page_items(self.page, self.filters[self.page] is not None)
 
     def _footer_lines(self, width: int,
                       max_lines: int = FOOTER_LINES) -> list[str]:
@@ -1042,10 +1174,10 @@ class _App:
             x = self._put(win, 0, x, "  ")
 
     def _subheader(self) -> str:
-        if self.search is not None:
+        if self.query is not None:
             tail = match_summary(len(self._rows_list()), len(self._base_rows()),
                                  self._full_count(), self._query_words())
-            return f"filter: {self.search}  {tail}"
+            return f"filter: {self.query}  {tail}"
         if self.page == PAGE_PADS:
             total = len(self.visible)
             position = f"{self.index + 1}/{total}" if total else "0/0"
@@ -1086,7 +1218,7 @@ class _App:
     def _draw_pads(self, win, y0: int, body_h: int, width: int) -> None:
         rows_list = self._rows_list()
         if not rows_list:
-            if self.search:
+            if self.query:
                 message = "no pad matches the filter"
             elif self.show_all:
                 message = ("no pads on the enabled sides"
@@ -1126,7 +1258,7 @@ class _App:
         rows_list = self._rows_list()
         if not rows_list:
             self._put(win, y0, 2,
-                      "no side matches the filter" if self.search else "no sides",
+                      "no side matches the filter" if self.query else "no sides",
                       curses.A_DIM)
             return
         for row in range(body_h):
@@ -1206,6 +1338,10 @@ class _App:
         self.status = ""
         if self.page == PAGE_PADS:
             self._sync_visible()
+        # Every page keeps its own filter; the new one is re-applied (its rows
+        # may have changed while another page was in front) without moving its
+        # cursor off the row it was left on.
+        self._apply_filter(move=False)
         if self.page == PAGE_STENCIL and self.presets is None:
             self._refresh_presets()
 
@@ -1321,7 +1457,7 @@ class _App:
 
     def _edit_key(self, key: int) -> None:
         field = LAYOUT_FIELDS[self.index]
-        if key in (10, 13, curses.KEY_ENTER):
+        if key in ENTER_KEYS:
             value = parse_number(self.editing or "")
             if value is None or not valid_value(field, value):
                 self.status = f"invalid value {self.editing!r} for {field.label}"
@@ -1331,12 +1467,12 @@ class _App:
             self.status = f"{field.label}: {value_text(field, self.config.layout)}"
             self._invalidate()
             return
-        if key == 27:
+        if key == KEY_ESC:                 # cancels the edit, nothing else
             self.editing = None
             self.status = "edit cancelled"
             return
         base = self.editing or ""
-        if self.edit_fresh and key not in (curses.KEY_BACKSPACE, 8, 127):
+        if self.edit_fresh and key not in BACKSPACE_KEYS:
             base = ""
         buffer = edit_buffer(base, key)
         if buffer is not None:
@@ -1350,81 +1486,114 @@ class _App:
         return self.page in (PAGE_PADS, PAGE_SIDES)
 
     def _start_search(self) -> None:
-        """``/``: enter search mode with an empty (everything passes) query."""
-        self.search = ""
-        self.search_anchor = self._current_row()
-        self.status = ""
-        self._apply_filter(self.search_anchor)
+        """``/``: a fresh search with an empty (everything passes) query.
 
-    def _apply_filter(self, keep=None) -> None:
-        """Re-filter the list for the current query, staying on ``keep``.
+        A filter that is still on the list is dropped right away, so typing
+        replaces it live instead of narrowing it further.
+        """
+        anchor = self._current_row()
+        self.search = ""
+        self.filters[self.page] = None
+        self.search_anchor = anchor
+        self.status = ""
+        self._apply_filter(anchor)
+
+    def _filter_page(self, page: int, keep=None, *, move: bool = False) -> Sequence:
+        """Re-filter ``page`` for its query and return the rows it shows.
+
+        ``move`` puts the cursor of that page back on ``keep`` (the first -
+        the best - match when it is gone); without it the cursor only stays in
+        range.
+        """
+        query = self.search if page == self.page else None
+        if query is None:
+            query = self.filters[page]
+        if query is None or page not in (PAGE_PADS, PAGE_SIDES):
+            self._filtered[page] = None
+            self._counts[page] = None
+        else:
+            rows = self.visible if page == PAGE_PADS else self.sides
+            fields = pad_fields if page == PAGE_PADS else side_fields
+            pairs = filter_counts(rows, fields, query)
+            self._filtered[page] = [row for row, _ in pairs]
+            self._counts[page] = [count for _, count in pairs]
+        shown = self._page_rows(page)
+        if move:
+            self.cursor[page] = restore_index(shown, keep, 0)
+        else:
+            self.cursor[page] = max(0, min(self.cursor[page],
+                                           max(0, len(shown) - 1)))
+        return shown
+
+    def _apply_filter(self, keep=None, *, move: bool = True) -> None:
+        """Re-filter the current page, staying on ``keep``.
 
         The rows are re-ordered (best match first), so the cursor follows
         ``keep`` by identity wherever it landed; when it dropped out of the
         filter the cursor goes to the first - the best - match.
         """
-        if self.search is None:
-            self.filtered = None
-            self.match_counts = None
-            return
-        if self.page == PAGE_PADS:
-            pairs = filter_counts(self.visible, pad_fields, self.search)
-        elif self.page == PAGE_SIDES:
-            pairs = filter_counts(self.sides, side_fields, self.search)
-        else:                                  # not reachable: / is list only
-            self.filtered = None
-            self.match_counts = None
-            return
-        self.filtered = [row for row, _ in pairs]
-        self.match_counts = [count for _, count in pairs]
-        self.cursor[self.page] = restore_index(self.filtered, keep, 0)
+        self._filter_page(self.page, keep, move=move)
 
-    def _end_search(self) -> None:
-        """Enter/Esc: drop the filter but stay on the focused item."""
+    def _end_search(self, keep_filter: bool) -> None:
+        """Leave the search: Enter keeps the filter, Esc drops it.
+
+        Either way the cursor stays on the row it was focused on - on the row
+        the search started from when nothing matched.
+        """
         target = self._current_row()
         if target is None:                     # nothing matched: the old item
             target = self.search_anchor
         fallback = self.cursor[self.page]
+        query = self.search
         self.search = None
-        self.filtered = None
-        self.match_counts = None
-        self.search_anchor = None
+        self.filters[self.page] = query if (keep_filter and query_words(query)) else None
+        if self.filters[self.page] is None:
+            self.search_anchor = None
+        # else the anchor is kept: it is where the cursor goes back to when a
+        # filter that matched nothing is cleared again.
+        self._apply_filter(move=False)
         self.cursor[self.page] = restore_index(self._rows_list(), target, fallback)
         self.status = ""
 
+    def _clear_filter(self) -> None:
+        """Esc outside the search: drop the filter, staying on the same row."""
+        target = self._current_row()
+        if target is None:                     # nothing matched: the old row
+            target = self.search_anchor
+        fallback = self.cursor[self.page]
+        self.search_anchor = None
+        self.filters[self.page] = None
+        self._apply_filter(move=False)
+        self.cursor[self.page] = restore_index(self._rows_list(), target, fallback)
+        self.status = "filter cleared"
+
     def _search_key(self, win, key: int) -> None:
         """One key while searching: navigate, edit the query or leave."""
-        if key in (10, 13, curses.KEY_ENTER, 27):
-            self._end_search()
-            return
-        if key in (curses.KEY_BACKSPACE, 8, 127):
+        action = search_action(key)
+        if action == SEARCH_KEEP:
+            self._end_search(True)
+        elif action == SEARCH_CLEAR:
+            self._end_search(False)
+        elif action == SEARCH_BACKSPACE:
             if self.search:
                 current = self._current_row()
                 self.search = self.search[:-1]
                 self._apply_filter(current)
-            return
-        if key == curses.KEY_UP:
+        elif action == "up":
             self._move(-1)
-            return
-        if key == curses.KEY_DOWN:
+        elif action == "down":
             self._move(1)
-            return
-        if key == curses.KEY_PPAGE:
+        elif action == "page-up":
             self._move(-max(1, win.getmaxyx()[0] - 5))
-            return
-        if key == curses.KEY_NPAGE:
+        elif action == "page-down":
             self._move(max(1, win.getmaxyx()[0] - 5))
-            return
-        if key == curses.KEY_HOME:
+        elif action == "first":
             self.index = 0
-            return
-        if key == curses.KEY_END:
+        elif action == "last":
             self.index = self._rows() - 1
-            return
-        char = search_char(key)
-        if char is not None:
+        elif action == SEARCH_CHAR:
             current = self._current_row()
-            self.search += char
+            self.search += search_char(key)
             self._apply_filter(current)
 
     def _preview(self, win, do_open: bool) -> None:
@@ -1448,6 +1617,21 @@ class _App:
             return None
         return True
 
+    def _escape(self, pending: Optional[str]) -> None:
+        """Esc outside the search and the inline edit - it never quits.
+
+        ``pending`` is the confirmation the previous key left behind; it has
+        already been cleared by the dispatcher, so cancelling it is only a
+        message.  With nothing pending Esc clears the filter, and with no
+        filter either it does nothing at all.
+        """
+        action = escape_action(pending=pending is not None,
+                               filtered=self.filters[self.page] is not None)
+        if action == ESC_PENDING:
+            self.status = "generate cancelled"
+        elif action == ESC_FILTER:
+            self._clear_filter()
+
     # -- key dispatch ------------------------------------------------------ #
     def _handle(self, win, key: int) -> Optional[bool]:
         """Handle one key; None to keep running, True/False to leave the loop."""
@@ -1460,6 +1644,10 @@ class _App:
 
         pending, self.pending = self.pending, None
 
+        if key == KEY_ESC:                             # never quits
+            self._escape(pending)
+            return None
+
         if key == ord("/") and self._searchable():
             self._start_search()
             return None
@@ -1467,13 +1655,13 @@ class _App:
         if key in (ord("1"), ord("2"), ord("3"), ord("4")):
             self._goto(key - ord("1"))
             return None
-        if key == 9:                                   # Tab
+        if key == KEY_TAB:
             self._goto((self.page + 1) % len(PAGE_NAMES))
             return None
         if key in (curses.KEY_BTAB, 353):              # Shift-Tab
             self._goto((self.page - 1) % len(PAGE_NAMES))
             return None
-        if key in (27, ord("q")):
+        if key == ord("q"):
             return False
         if key == ord("p"):
             self._preview(win, False)
@@ -1481,8 +1669,8 @@ class _App:
         if key == ord("v"):
             self._preview(win, True)
             return None
-        if key == ord("g") and self.page != PAGE_PADS:
-            return self._confirm("g", pending)
+        if key == KEY_GENERATE:                        # 'w' generates everywhere
+            return self._confirm("w", pending)
 
         if key in (curses.KEY_UP, ord("k")):
             self._move(-1)
@@ -1496,31 +1684,27 @@ class _App:
         if key == curses.KEY_NPAGE:
             self._move(max(1, win.getmaxyx()[0] - 5))
             return None
-        if key == curses.KEY_HOME:
+        if key in (curses.KEY_HOME, ord("g")):         # vim's gg
             self.index = 0
             self.status = ""
             return None
-        if key == curses.KEY_END:
+        if key in (curses.KEY_END, ord("G")):
             self.index = self._rows() - 1
             self.status = ""
             return None
 
+        # Nothing below generates or leaves the loop any more - 'w' is the
+        # only key that does, and it was handled above.
         if self.page == PAGE_PADS:
-            return self._handle_pads(key, pending)
+            return self._handle_pads(key)
         if self.page == PAGE_SIDES:
-            return self._handle_sides(key, pending)
+            return self._handle_sides(key)
         if self.page == PAGE_STENCIL:
-            return self._handle_stencil(key, pending)
-        return self._handle_layout(key, pending)
+            return self._handle_stencil(key)
+        return self._handle_layout(key)
 
-    def _handle_pads(self, key: int, pending: Optional[str]) -> Optional[bool]:
-        if key == ord("g"):                # Home on this page (enter generates)
-            self.index = 0
-            self.status = ""
-        elif key == ord("G"):
-            self.index = self._rows() - 1
-            self.status = ""
-        elif key == ord("*"):
+    def _handle_pads(self, key: int) -> None:
+        if key == ord("*"):
             self._toggle_show_all()
         elif key == ord(" "):
             pad = self.current_pad
@@ -1536,28 +1720,27 @@ class _App:
             self._jump_undefined(True)
         elif key == ord("N"):
             self._jump_undefined(False)
-        elif key in (10, 13, curses.KEY_ENTER):
-            return self._confirm("enter", pending)
-        return None
+        return None                        # Enter does nothing here: 'w' generates
 
-    def _handle_sides(self, key: int, pending: Optional[str]) -> Optional[bool]:
-        if key in (ord(" "), 10, 13, curses.KEY_ENTER):
-            if self.sides:
-                self._toggle_side(self.sides[self.index])
+    def _handle_sides(self, key: int) -> None:
+        if key in (ord(" "), *ENTER_KEYS):
+            side = self._current_row()          # of the filtered list, if any
+            if isinstance(side, Side):
+                self._toggle_side(side)
         elif key == ord("A"):
             self._set_all_sides(True)
         elif key == ord("N"):
             self._set_all_sides(False)
         return None
 
-    def _handle_stencil(self, key: int, pending: Optional[str]) -> Optional[bool]:
-        if key in (ord(" "), 10, 13, curses.KEY_ENTER):
+    def _handle_stencil(self, key: int) -> None:
+        if key in (ord(" "), *ENTER_KEYS):
             self._select_size(STENCIL_SIZES[self.index])
         elif key == ord("o"):
             self._toggle_orientation()
         return None
 
-    def _handle_layout(self, key: int, pending: Optional[str]) -> Optional[bool]:
+    def _handle_layout(self, key: int) -> None:
         field = LAYOUT_FIELDS[self.index]
         if key in (ord("+"), ord("="), curses.KEY_RIGHT):
             self._step_field(field, 1)
@@ -1568,7 +1751,7 @@ class _App:
                 self.status = f"{field.label} is a number — press e or enter to edit"
             else:
                 self._toggle_field(field)
-        elif key in (ord("e"), 10, 13, curses.KEY_ENTER):
+        elif key in (ord("e"), *ENTER_KEYS):
             self._start_edit(field)
         return None
 
