@@ -92,9 +92,9 @@ the board is flipped over; `--no-mirror-bottom` places them as they are.
 Sheet coordinates start at (0, 0) in the bottom left corner of the stencil, in
 millimetres; the report and the rulers of the preview use them.
 
-Sheet sizes: 380 x 280 (default), 420 x 320, 450 x 350, 460 x 460, 520 x 420,
-600 x 600 and 700 x 600 mm, each in landscape (long side horizontal) or
-portrait. The Stencil page shows for every size and both orientations whether
+Sheet sizes: 270 x 270, 380 x 280 (default), 420 x 320, 450 x 350, 460 x 460,
+520 x 420, 600 x 600 and 700 x 600 mm, each in landscape (long side
+horizontal) or portrait. The Stencil page shows for every size and both orientations whether
 the current block fits. A cell that fits nowhere is parked to the right of the
 sheet, the header says DOES NOT FIT, the preview grows to show it, and
 generating asks for a second confirmation. The gerbers are written regardless.
@@ -139,7 +139,7 @@ written to `.stencicrity`; the old file stays where it is.
 
 ```ini
 [stencil]
-size = 380x280            # 380x280 | 420x320 | 450x350 | 460x460 | 520x420 | 600x600 | 700x600
+size = 380x280            # 270x270 | 380x280 | 420x320 | 450x350 | 460x460 | 520x420 | 600x600 | 700x600
 orientation = landscape   # landscape (long side horizontal) | portrait
 
 [layout]

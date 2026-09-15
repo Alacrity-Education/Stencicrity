@@ -41,11 +41,11 @@ STATE_OPEN = "open"
 STATE_IGNORE = "ignore"
 STATES = (STATE_UNDEFINED, STATE_OPEN, STATE_IGNORE)
 
-# Orderable stencil sheet sizes (mm), long side first. The first one is the default.
+# Orderable stencil sheet sizes (mm), long side first, smallest first.
 STENCIL_SIZES: tuple[tuple[int, int], ...] = (
-    (380, 280), (420, 320), (450, 350), (460, 460), (520, 420), (600, 600), (700, 600),
+    (270, 270), (380, 280), (420, 320), (450, 350), (460, 460), (520, 420), (600, 600), (700, 600),
 )
-DEFAULT_STENCIL_SIZE: tuple[int, int] = STENCIL_SIZES[0]
+DEFAULT_STENCIL_SIZE: tuple[int, int] = (380, 280)
 ORIENTATION_LANDSCAPE = "landscape"   # long side horizontal
 ORIENTATION_PORTRAIT = "portrait"     # long side vertical
 ORIENTATIONS = (ORIENTATION_LANDSCAPE, ORIENTATION_PORTRAIT)
