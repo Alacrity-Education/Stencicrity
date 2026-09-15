@@ -103,7 +103,10 @@ level, so a test host still needs it), and a render test should use a small
 
 ## Adding a layout parameter end to end
 
-Say you want `frame_width`. Seven places, in this order:
+Say you want `frame_width`. Seven places, in this order. (The `datum` switch
+and its six `slot_*` numbers went through exactly these steps; grep for
+`slot_corner` to see one parameter in all seven at once, and for `datum` to see
+a `choice` rather than a number.)
 
 1. **`model.LayoutParams`** - add the field with its default and a comment
    giving the unit. Add a derived property if other code would repeat the same
@@ -119,17 +122,29 @@ Say you want `frame_width`. Seven places, in this order:
    given), then add `("frame_width", args.frame_width)` to the tuple in
    `apply_cli_config()`, and a row in `_check_args()` if it has a valid range.
 4. **`tui.LAYOUT_FIELDS`** - add a `Field(attr, label, kind, unit, step,
-   minimum, rule)`; `kind` is `"length"`, `"bool"` or `"choice"`. The Layout
-   page, the stepping, the inline editor and the validation all come from that
-   one entry.
+   minimum, rule)`; `kind` is `"length"`, `"bool"` or `"choice"` (a `choice`
+   also needs `choices=`). The Layout page, the stepping, the inline editor and
+   the validation all come from that one entry. A row that only applies to one
+   mode of another field belongs in `tui.DATUM_ROWS` as well, so
+   `field_applies()` dims it when it does not apply.
 5. **`layout.py`** - use it in `pack()` / `_dividers()` / `_dots()` /
-   `_holes()`, and report it in `layout_report()`.
+   `_datum()`, and report it in `layout_report()`.
 6. **`README.md`** - the `[layout]` example block, the option list under
    "Options worth knowing", and the Layout row of the TUI table.
 7. **`docs/`** - the `LayoutParams` table in
    [data-model.md](data-model.md), the mechanism in [layout.md](layout.md), the
-   `[layout]` key table in [pads-and-config.md](pads-and-config.md) and the
-   field table in [tui.md](tui.md).
+   `[layout]` key table in [pads-and-config.md](pads-and-config.md), the field
+   table in [tui.md](tui.md) and, when it shows up in the preview,
+   [render.md](render.md).
+
+**Renaming or replacing one.** `datum` replaced a boolean `holes` field. The
+rule is that an existing `.stencicrity` must keep behaving the way it did:
+`format_config()` stops writing the old key, but `_read_layout()` keeps a
+branch that maps it onto the new one (and lets the new key win when both are
+present), the old command line spelling stays as a hidden-in-spirit alias
+(`--holes` / `--no-holes` set `--datum`), and the old attribute survives as a
+read-only property on `LayoutParams` so call sites that only *read* it keep
+working. See [pads-and-config.md](pads-and-config.md) for the mapping table.
 
 Then re-run the batch smoke check and diff the generated `.stencicrity`.
 

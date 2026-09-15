@@ -413,6 +413,18 @@ stencil side improves by an order of magnitude and stops being the limit.
 - Stays configurable: everything above plus `gap`, `dot_*`; the TUI Layout
   page swaps the hole rows for datum rows.
 
+**Implemented.** stencicrity ships the *closed*-slot variant of 4b, not the
+open fence: a slot has to lie completely inside its own cell, because an open
+slot straddling a cell edge would cut into the neighbouring board's piece and
+into the scissor zone. Three closed obround slots per cell (two on the bottom
+edge, one on the left at mid height), the pins pass through them and the piece
+is pushed toward the bottom-left datum corner until the inner walls touch.
+The parameters are `datum = slots | holes | none` with `slot_width` 4.5,
+`slot_length` 12.0, `slot_offset` 2.25 (cell edge to outer wall), `slot_corner`
+8.0, `slot_web` 3.0 and `pin_dia` 3.0; the existing `hole_grid` keeps its name
+and now snaps the pin centres of either datum. See
+[layout.md](layout.md#the-datum).
+
 ## 7. Open questions, first-sheet tests
 
 1. Ask the stencil house whether 4.5 x 12 mm openings in the paste layer pass

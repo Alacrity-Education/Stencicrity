@@ -205,6 +205,24 @@ class GerberWriter:
         self._body.append(f"X{ix}Y{iy}D03*")
         self._x, self._y = ix, iy
 
+    def add_obround(self, cx: float, cy: float, w: float, h: float,
+                    attrs: dict | None = None) -> None:
+        """Flash a standard obround aperture ``w`` x ``h`` at sheet coordinates.
+
+        ``w`` is the size along x and ``h`` the size along y (the shape is a
+        rectangle with the two short sides replaced by half circles, i.e. a
+        circle when ``w == h``), so an alignment slot along the bottom cell
+        edge is ``add_obround(cx, cy, slot_length, slot_width)`` and one along
+        the left edge ``add_obround(cx, cy, slot_width, slot_length)``.
+        """
+        baked = BakedAperture("O", [float(w), float(h)], [], dict(attrs or {}))
+        code = self._register(baked)
+        self._set_polarity(True)
+        self._select(code)
+        ix, iy = _nm(cx), _nm(cy)
+        self._body.append(f"X{ix}Y{iy}D03*")
+        self._x, self._y = ix, iy
+
     def add_polygon(self, points: list[tuple[float, float]]) -> None:
         """Fill a polygon (``G36``/``G37``) given in sheet coordinates."""
         pts: list[tuple[int, int]] = []

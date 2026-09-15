@@ -20,9 +20,18 @@ pitch across the whole sheet. Cells are placed on the stencil sheet with a
 MaxRects bin packer; the sparse dotted border outlines every cell as two
 parallel dotted lines ``dot_line_gap`` apart centred on the cell edge (a
 shared edge is dotted once), except the edges on the outer boundary of the
-whole block, which ``outer_border`` adds. The dowel pin holes sit inside each
-cell near its four corners, ``hole_inset`` away from the cell edges. The block
-of all cells is centred on the stencil (keeping the grid alignment).
+whole block, which ``outer_border`` adds.
+
+Alignment features (``datum``): with ``slots`` every cell gets three obround
+slots that lie completely inside its own cell padding (never touching the
+scissor zone or a neighbour): two along the bottom edge, ``slot_corner`` from
+the corners, and one along the left edge at mid height. The jig pins pass
+through the slots and the piece is pushed toward the bottom-left datum corner
+so the slot walls nearest the board touch the pins: three contacts, exact
+constraint. With ``holes`` every cell gets four round holes near its corners
+(legacy). ``hole_grid`` snaps the pin centres of either datum onto a common
+grid. The block of all cells is centred on the stencil (keeping the grid
+alignment).
 """
 from __future__ import annotations
 
@@ -55,6 +64,12 @@ SORT_ORDERS = (SORT_HEIGHT, SORT_NAME)
 
 # Reference prefixes whose pads without paste default to "ignore" (net ties, test points).
 DEFAULT_IGNORE_PREFIXES: tuple[str, ...] = ("NT", "TP")
+
+# Alignment datum cut into every cell for the pin jig.
+DATUM_SLOTS = "slots"    # three obround slots inside the cell, pins pass through them, piece pushed to the datum corner
+DATUM_HOLES = "holes"    # four round holes near the cell corners (legacy, over-constrained but simple)
+DATUM_NONE = "none"      # no alignment features
+DATUM_MODES = (DATUM_SLOTS, DATUM_HOLES, DATUM_NONE)
 
 
 def size_label(size: tuple[int, int]) -> str:
@@ -226,13 +241,23 @@ class Project:
 class LayoutParams:
     """Everything on the TUI "Layout" page; persisted in the [layout] section."""
     gap: float = 30.0          # spacing between neighbouring boards (mm); dotted border at gap/2
-    holes: bool = True         # cut dowel pin holes at all
+    datum: str = DATUM_SLOTS   # alignment features per cell: DATUM_SLOTS | DATUM_HOLES | DATUM_NONE
+    # -- holes datum (legacy) --
     hole_dia: float = 5.0      # dowel pin hole diameter (mm)
     hole_inset: float = 2.0    # dotted line (cell edge) to hole edge (mm); may be negative
+    # -- slots datum --
+    slot_width: float = 4.5    # slot size across the cell edge (mm)
+    slot_length: float = 12.0  # slot size along the cell edge (mm)
+    slot_offset: float = 2.25  # cell edge to the slot's outer wall (mm); keeps the slot clear of the scissor zone
+    slot_corner: float = 8.0   # cell corner to the centre of the two bottom slots, along the edge (mm)
+    slot_web: float = 3.0      # minimum foil between a slot's inner wall and the board (mm); cells grow to keep it
+    pin_dia: float = 3.0       # jig pin diameter for the slots datum (mm); the holes datum uses hole_dia pins
+    # -- dotted border --
     dot_dia: float = 0.5       # divider dot diameter (mm)
     dot_pitch: float = 3.0     # centre-to-centre distance of divider dots (mm)
     dot_line_gap: float = 2.5  # the dotted border is two parallel lines this far apart, centred on the cell edge (0 = one line)
-    hole_grid: float = 8.0     # dowel hole centres snap to a grid of this pitch (mm); cells grow to make it possible (0 = off)
+    # -- jig --
+    hole_grid: float = 8.0     # pin centres (holes or slots) snap to a grid of this pitch (mm); 0 = off
     outer_border: bool = False # also dot the cell edges on the outer boundary of the block
     sort: str = SORT_HEIGHT    # cell order: SORT_HEIGHT (tallest boards first) or SORT_NAME
 
@@ -242,9 +267,34 @@ class LayoutParams:
         return self.gap / 2.0
 
     @property
+    def holes(self) -> bool:
+        return self.datum == DATUM_HOLES
+
+    @property
+    def slots(self) -> bool:
+        return self.datum == DATUM_SLOTS
+
+    @property
     def hole_offset(self) -> float:
-        """Cell edge to hole centre."""
+        """Cell edge to hole centre (holes datum)."""
         return self.hole_inset + self.hole_dia / 2.0
+
+    @property
+    def slot_inner(self) -> float:
+        """Cell edge to the slot's inner wall, the wall the pin touches (slots datum)."""
+        return self.slot_offset + self.slot_width
+
+    @property
+    def pin_offset(self) -> float:
+        """Cell edge to the pin centre for the active datum (used for grid snapping)."""
+        if self.datum == DATUM_SLOTS:
+            return self.slot_inner - self.pin_dia / 2.0
+        return self.hole_offset
+
+    @property
+    def min_pad_for_slots(self) -> float:
+        """Smallest cell padding that hosts a slot and the web to the board."""
+        return self.slot_inner + self.slot_web
 
 
 @dataclass
@@ -285,7 +335,10 @@ class Area:
     transform: Transform       # board -> sheet for this side's objects
     row: int = 0               # informational (placement order); cells are packed with MaxRects, not in rows
     overflow: bool = False     # did not fit on the sheet; parked to the right of it
-    holes: list[tuple[float, float]] = field(default_factory=list)   # dowel hole centres, sheet coords
+    holes: list[tuple[float, float]] = field(default_factory=list)   # round hole centres, sheet coords (holes datum)
+    slots: list[tuple[float, float, float, float]] = field(default_factory=list)  # obround slots (cx, cy, w, h), sheet coords (slots datum); w along x, h along y
+    pins: list[tuple[float, float]] = field(default_factory=list)    # jig pin centres, sheet coords (both datums; == holes for the holes datum)
+    datum_corner: tuple[float, float] = (0.0, 0.0)   # sheet coords of the corner the piece is pushed toward (slots datum: bottom-left of the cell)
 
     @property
     def rect(self) -> tuple[float, float, float, float]:

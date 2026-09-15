@@ -23,7 +23,7 @@ be exercised without a terminal. `_App` only draws and dispatches keys.
 | text | `clip`, `_col`, `fmt_mm`, `ellipsis`, `_wrap`, `wrap_items`, `wrap_text` | column padding, number formatting and footer line breaking |
 | search | `query_words`, `match_count`, `matches`, `filter_counts`, `filter_rows`, `full_matches`, `match_summary`, `search_char`, `restore_index` | the whole filter: matching, ranking, the sub-header tail and cursor preservation |
 | rows | `pad_position`, `board_text`, `pad_fields`, `side_fields`, `row_segments`, `format_row`, `pads_header`, `side_row`, `orientation_size`, `preset_row`, `fit_segments`, `fit_line` | the exact text of every row and of the status line |
-| layout fields | `Field`, `LAYOUT_FIELDS`, `value_text`, `valid_value`, `step_value`, `parse_number`, `toggle_field`, `format_field_row`, `edit_buffer` | the editable parameters of the Layout page and their validation |
+| layout fields | `Field`, `LAYOUT_FIELDS`, `DATUM_ROWS`, `field_applies`, `value_text`, `valid_value`, `step_value`, `parse_number`, `toggle_field`, `format_field_row`, `edit_buffer` | the editable parameters of the Layout page, their validation and which of them the current datum applies to |
 
 ### Draw and dispatch
 
@@ -137,13 +137,19 @@ plus value (or the edit buffer with a trailing `_` while editing):
 | attr | label | kind | unit | step | minimum | rule |
 | --- | --- | --- | --- | --- | --- | --- |
 | `gap` | spacing (gap between boards) | length | mm | 0.5 | 0.0 | `ge0` |
-| `holes` | holes | bool | — | — | — | — |
+| `datum` | datum (alignment features) | choice | — | — | — | slots \| holes \| none |
 | `hole_dia` | hole diameter | length | mm | 0.5 | 0.1 | `gt0` |
 | `hole_inset` | hole inset (dotted line to hole edge) | length | mm | 0.5 | none | `any` |
+| `slot_width` | slot width | length | mm | 0.5 | 0.1 | `gt0` |
+| `slot_length` | slot length | length | mm | 0.5 | 0.1 | `gt0` |
+| `slot_offset` | slot offset (edge to outer wall) | length | mm | 0.5 | 0.0 | `ge0` |
+| `slot_corner` | slot corner distance | length | mm | 0.5 | 0.1 | `gt0` |
+| `slot_web` | slot web (to board) | length | mm | 0.5 | 0.1 | `gt0` |
+| `pin_dia` | pin diameter | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_dia` | dot diameter | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_pitch` | dot pitch | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_line_gap` | dotted line gap (0 = single line) | length | mm | 0.5 | 0.0 | `ge0` |
-| `hole_grid` | hole grid (0 = off) | length | mm | 1.0 | 0.0 | `ge0` |
+| `hole_grid` | pin grid (0 = off) | length | mm | 1.0 | 0.0 | `ge0` |
 | `outer_border` | outer border | bool | — | — | — | — |
 | `sort` | sort | choice | — | — | — | height \| name |
 
@@ -151,6 +157,22 @@ plus value (or the edit buffer with a trailing `_` while editing):
 dowel hole onto the dotted line instead of beside it. `Field.numeric` is true
 only for `kind == "length"`, which is what decides between stepping/editing and
 toggling. See [data-model.md](data-model.md) for what each parameter means.
+
+**The datum row and dimming.** `datum` is an ordinary `choice` field, so space,
+`+`/`→`, `e` and Enter all cycle it (`-`/`←` cycles backwards) through
+slots → holes → none. It also decides which of the other rows are *relevant*:
+`DATUM_ROWS` maps each datum-specific attribute to the mode it belongs to and
+`field_applies(field, params)` answers whether a row matters right now — the
+two hole rows under `slots`, the six slot rows under `holes`, and both groups
+under `none`, are drawn with `curses.A_DIM` added to their attribute (the
+cursor's `A_REVERSE` still wins visually). The rows that are shared by every
+datum — spacing, the dots, the pin grid, the outer border and the sort order —
+are never dimmed.
+
+Dimming is presentation only. A dimmed row still steps, still edits and still
+saves: that is deliberate, so a slot size can be dialled in before switching
+the datum over, and so an old configuration's `hole_dia` is not silently lost
+while the default `slots` datum is active.
 
 ### The status line
 
@@ -210,8 +232,8 @@ Layout page:
 | --- | --- |
 | `+` `=` `→` | step the value up (or toggle / cycle forwards) |
 | `-` `_` `←` | step the value down (or toggle / cycle backwards) |
-| space | toggle a switch or cycle a choice; on a number it only prints a hint |
-| `e`, Enter | start editing the number inline |
+| space | toggle a switch or cycle a choice (`datum`, `sort`); on a number it only prints a hint |
+| `e`, Enter | start editing the number inline; on a choice row it cycles instead |
 
 Two of these deviate from the obvious: on the Pads page `g` and `G` are Home and
 End because Enter already generates there, and `o` opens a pad on the Pads page

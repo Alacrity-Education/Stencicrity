@@ -1,8 +1,8 @@
-# Layout: cells, packing, dividers and holes
+# Layout: cells, packing, dividers and the datum
 
 `pcbstencil/layout.py` turns a list of enabled board sides into one `Layout`:
-where every side sits on the stencil sheet, where the dowel pin holes go, and
-which dotted lines mark the border between two boards. It is pure geometry —
+where every side sits on the stencil sheet, where its alignment features (the
+*datum*) go, and which dotted lines mark the border between two boards. It is pure geometry —
 no gerber objects are read here, only the bounding box of every project — and
 it is deterministic: the same sides and the same `LayoutParams` always give the
 same sheet. The public entry points are `pack(sides, config) -> Layout` and
@@ -16,20 +16,43 @@ Every enabled side gets one rectangular **cell**: the board bounding box padded
 by `gap/2` on each of its four sides, so two neighbouring cells that touch keep
 their boards at least `gap` apart and the shared edge sits in the middle of that
 gap. `LayoutParams.pad` is that `gap/2`. Cells are never rotated and never
-stretched to fill space; the only thing that ever makes a cell bigger than
-`board + gap` is the dowel hole grid.
+stretched to fill space; the only two things that ever make a cell bigger than
+`board + gap` are the room the `slots` datum needs and the `holes` datum's pin
+grid. `_cell_of(board_w, board_h, params, grid)` is the single place that
+decides a cell size:
+
+| `datum` | cell |
+| --- | --- |
+| `slots` | at least `board + 2 * min_pad_for_slots` on both axes, at least `2 * slot_corner + slot_length` wide (the two bottom slots side by side) and at least `slot_length + 2 * slot_offset` tall (the left slot). The pin grid never grows it. |
+| `holes` | `board + gap`, then `_cell_size` grows each side until the hole-to-hole distance is a whole number of grid pitches. |
+| `none` | exactly `board + gap`. |
 
 ```
-    cell (w, h)                       · = divider dots (two lines per edge)
+ datum = slots (default)              · = divider dots (two lines per edge)
+ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·   [==] = obround slot,  x = jig pin
+ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
+ ·                                ·   the board bbox is centred in the cell;
+ ·        +------------+          ·   padding = (cell - board) / 2, which is
+[=]       |            |          ·   gap/2 unless the cell was grown
+[x]       |   board    |          ·
+[=]       |            |          ·   slot_offset  edge -> outer wall (2.25)
+ ·        +------------+          ·   slot_inner   edge -> inner wall (6.75)
+ ·                                ·   slot_web     inner wall -> board (>= 3)
+ ·   [==x==]        [==x==]       ·   slot_corner  corner -> slot centre (8)
+ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
+ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·   the piece is pushed toward the
+ ^                                    bottom-left datum corner until each
+ datum corner (Area.datum_corner)     inner wall touches its pin
+
+
+ datum = holes (legacy)
  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·   o = dowel pin hole
  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
       o                     o         ho = hole_inset + hole_dia/2
  ·                                ·        (LayoutParams.hole_offset)
  ·        +------------+          ·
- ·        |            |          ·   the board bbox is centred in the cell
- ·        |   board    |          ·   padding = (cell - board) / 2,
- ·        |            |          ·   which is gap/2 unless the cell was
- ·        +------------+          ·   grown for the hole grid
+ ·        |   board    |          ·
+ ·        +------------+          ·
  ·                                ·
       o                     o
  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
@@ -37,16 +60,24 @@ stretched to fill space; the only thing that ever makes a cell bigger than
  |<-ho->|                            holes sit ho inside both cell edges
 ```
 
-### Growing a cell for the hole grid
+### Growing a cell for the hole grid (`holes` datum)
 
-With `hole_grid > 0` every dowel hole on the whole sheet has to land on one
-common raster of that pitch, measured from the sheet origin. Two independent
-conditions follow from that, and `_cell_size` handles the first one:
+With `hole_grid > 0` every jig pin on the whole sheet has to land on one common
+raster of that pitch, measured from the sheet origin. `_grid_of(params)` is the
+pitch that actually applies — `hole_grid`, or 0 when the datum is `none`,
+because then there are no pins to align. `ho` below is `params.pin_offset`, the
+cell edge to pin centre distance of whichever datum is active.
+
+For the `holes` datum two independent conditions follow, and `_cell_size`
+handles the first one:
 
 * the two holes on one cell edge are `cell - 2*ho` apart, so that distance has
   to be a whole number of grid pitches;
 * the cell corner has to sit at `k * pitch - ho`, which is the packer's job
   (`_snap_up`, below).
+
+The `slots` datum only needs the second one: its slot centres are moved along
+their own edge instead of the cell being grown (see *The datum* below).
 
 `_grid_size` grows one cell side `s` to the next admissible length:
 
@@ -62,8 +93,9 @@ The board stays centred in the grown cell, so the padding grows past `gap/2` —
 the report prints `padding ≥ 15.0 mm` instead of `padding 15.0 mm` whenever the
 grid is on.
 
-Worked arithmetic for the smallest board in the sample set, RBARF, with the
-default parameters (`gap` 30, `hole_dia` 5, `hole_inset` 2, `hole_grid` 8):
+Worked arithmetic for the smallest board in the sample set, RBARF, with
+`datum = holes` and otherwise default parameters (`gap` 30, `hole_dia` 5,
+`hole_inset` 2, `hole_grid` 8):
 
 | step | value |
 | --- | --- |
@@ -77,7 +109,10 @@ default parameters (`gap` 30, `hole_dia` 5, `hole_inset` 2, `hole_grid` 8):
 | cell | 49.0 x 49.0 mm |
 | padding kept by the board | (49 - 13.405)/2 = 17.8 mm in x, (49 - 11.610)/2 = 18.7 mm in y |
 
-With `hole_grid = 0` the same cell is exactly 43.405 x 41.610 mm.
+With `hole_grid = 0` the same cell is exactly 43.405 x 41.610 mm — and so it is
+with the default `datum = slots` at any grid, because 15 mm of padding is
+already more than the 9.75 mm `min_pad_for_slots` and 43.405 mm is wider than
+the `2 * 8 + 12 = 28` mm the two bottom slots need.
 
 ## Ordering
 
@@ -148,8 +183,12 @@ the report.
 
 ## Grid snapping, overflow and centring
 
+`ho` is `params.pin_offset` throughout: `slot_inner - pin_dia/2` (5.25 mm by
+default) for the `slots` datum, `hole_offset` (4.5 mm) for `holes`. The packer
+does not care which datum produced it.
+
 `_snap_up(value, ho, grid)` returns the smallest cell corner `>= value` whose
-holes land on the grid: it computes `steps = (value + ho) / grid` and takes
+pins land on the grid: it computes `steps = (value + ho) / grid` and takes
 `round(steps)` when that is within `_ALIGN_EPS` of the exact value (a position
 that is already admissible is returned as the exact grid position, not pushed
 up a whole pitch), otherwise `ceil(steps)`; the result is `steps * grid - ho`.
@@ -167,7 +206,7 @@ them — which is exactly why `Layout.block` can be wider than the sheet and why
 
 **Centring.** The block of *placed* cells is centred on the stencil. The offset
 is `_snap_down(max(0, (sheet - block) / 2), grid)` on each axis, so it is a
-whole number of pitches and every hole stays on the grid measured from the
+whole number of pitches and every pin stays on the grid measured from the
 sheet origin. With no placed cell at all the offset is zero.
 
 **`_aligned`.** Floating point addition is not associative: `(start + offset) +
@@ -181,8 +220,8 @@ coordinate onto an already translated far edge when the two are within
 After that, `pack` builds one `Area` per side: the cell rectangle, the board
 rectangle (`board_rect`, the board bbox centred in the cell), the board → sheet
 `Transform` (`dx = bx - (-maxx if mirror else minx)`, `dy = by - miny`), the
-dowel holes, `row` (the packing order index, informational only) and the
-`overflow` flag.
+datum (`holes`, `slots`, `pins` and `datum_corner`, from `_datum()`), `row`
+(the packing order index, informational only) and the `overflow` flag.
 
 ## Dividers
 
@@ -214,7 +253,8 @@ as faint dashed guides and `_dots` walks to place the openings.
 
 ## Dots
 
-`_dots(dividers, params)` places the openings along each divider segment:
+`_dots(dividers, params, cover)` places the openings along each divider
+segment:
 
 ```
 n     = floor(length / dot_pitch)        (0 when the pitch is not positive)
@@ -233,20 +273,85 @@ spatial hash — points are bucketed by `floor(coord / min_dist)` and only the
 The dots are not a drawing aid: they are flashed into the paste layer as real
 round openings of `dot_dia`, so the sheet can be snapped apart along them.
 
-## Holes
+## The datum
+
+`_datum(x, y, w, h, params, grid, seen)` produces the alignment features of one
+cell and returns `(holes, slots, pins)` in sheet coordinates. `pins` is filled
+for *both* datums — it is what the grid check and the preview's ghost circles
+use — and `Area.datum_corner` is always the cell's bottom left corner `(x, y)`.
+
+### `slots`
+
+Three obround slots, all of them completely inside the cell's own padding:
+
+```
+xl, xr = _bottom_slot_xs(x, w, params, grid)     # the two bottom slot centres
+yc     = _left_slot_y(y, h, params, grid)        # the left slot centre
+bottom = y + slot_offset + slot_width/2          # centre line of a bottom slot
+left   = x + slot_offset + slot_width/2          # centre line of the left slot
+
+slots = [(xl, bottom, slot_length, slot_width),  # (cx, cy, w along x, h along y)
+         (xr, bottom, slot_length, slot_width),
+         (left, yc,   slot_width,  slot_length)]
+
+pin  = slot_inner - pin_dia/2                    # == params.pin_offset
+pins = [(xl, y + pin), (xr, y + pin), (x + pin, yc)]
+```
+
+The two bottom slots run along x, the left one along y. Each pin sits tangent
+to the slot wall nearest the board — a bottom pin touches its slot from below,
+the left pin from the left — because the piece is pushed toward the bottom-left
+`datum_corner`. Two contacts on the bottom fix y and rotation, the third fixes
+x: three contacts, exact constraint, no over-determination.
+
+Nothing here can reach a neighbouring cell or the scissor zone. A slot's outer
+wall is `slot_offset` inside the cell edge, its inner wall `slot_inner`, and the
+cell always has at least `min_pad_for_slots = slot_inner + slot_web` of padding
+(`_cell_of` grew it otherwise), so the board keeps its `slot_web` of foil.
+Along its own edge a slot centre is confined to the span `_slot_span` returns,
+`[slot_offset + length/2, size - slot_offset - length/2]`, which keeps its round
+ends `slot_offset` clear of the two cell edges it runs into.
+
+**Slots and the pin grid.** The cell is never grown for the grid; the slot
+centre moves along its edge instead. `_on_grid_in(value, lo, hi, grid)` returns
+the grid point nearest `value` that is still inside `[lo, hi]`, falling back to
+the clamped `value` when the span holds no grid point at all (a very small cell
+— the report then flags the pin `OFF GRID`). `_left_slot_y` applies that to the
+cell's mid height. `_bottom_slot_xs` starts from `slot_corner` inside each
+bottom corner, snaps both, and then makes sure the two slots do not overlap: if
+the snapped pair is closer than `slot_length`, the right one is re-snapped
+freely and the left one inside `[lo, xr - length]`; if that still fails, the
+cell is too short and the two are spread to the ends of the span. With
+`grid <= 0` both slots sit exactly `slot_corner` from the corners.
+
+### `holes`
 
 `_holes(x, y, w, h, params, seen)` returns the four dowel hole centres of one
 cell, at `hole_offset = hole_inset + hole_dia/2` inside both cell edges it is
-near, in the order bottom-left, bottom-right, top-right, top-left. With
-`holes = off` it returns an empty list, and `Area.holes` is then empty for every
-cell.
+near, in the order bottom-left, bottom-right, top-right, top-left. The pins
+*are* the holes.
 
 `hole_inset` may be negative: at `hole_inset = -hole_dia/2` the hole centre sits
 exactly on the cell edge, and two cells sharing that edge would put a hole in
 the same place. A single `_Dedupe(_HOLE_EPS)` (1e-6 mm) is threaded through all
 cells of the sheet, so the second cell simply does not get that hole — the
-report prints `dowel holes: none (shared with a neighbouring cell or off)` when
-a cell ends up with none at all.
+report prints `dowel holes: none (shared with a neighbouring cell)` when a cell
+ends up with none at all.
+
+### `none`
+
+Three empty lists. `_grid_of` also returns 0, so no snapping happens anywhere
+and every cell is exactly `board + gap`.
+
+### Dots inside a datum opening
+
+`_dots` is handed a `_Cover(areas, params)` and drops any dot whose centre would
+fall inside a slot or a dowel hole — a dot there would be cut out of the foil
+twice and weaken the wall the pin touches. `_Cover` stores every opening as a
+segment plus a radius (a slot is a stadium: its centre segment grown by
+`min(w, h)/2`; a hole is a point grown by `hole_dia/2`) and buckets them on a
+raster at least as coarse as the largest opening, so `covers(x, y)` only tests
+the shapes in one bucket. `_in_obround` is the point-in-stadium test.
 
 ## `fits`
 
@@ -272,20 +377,30 @@ switched off the layout has no areas at all, the block is `(0, 0, 0, 0)` and
 | --- | --- |
 | `Stencil:` | sheet size in mm, the preset label and the orientation |
 | `Block:` | block size and its corners, `FITS` or `DOES NOT FIT` |
-| `Cells:` | placed count, winning heuristic, overflow count, gap, padding (`≥` when the grid is on), sort order |
-| `Holes:` | diameter, inset and the resulting centre offset — or `off` |
-| `Grid:` | pitch, whether every hole is on the raster, the hole count, and the extra cell area the grid cost — or `off (cells are exactly board + gap)` |
+| `Cells:` | placed count, winning heuristic, overflow count, gap, padding (`≥` when the cells were grown), sort order |
+| `Datum:` | the mode and its numbers — for `slots` two lines (slot size, the two wall offsets, the pin diameter and the push direction; then the placement rule and the web), for `holes` one (diameter, inset and the resulting centre offset), for `none` just `none` |
+| `Grid:` | pitch, whether every *pin* is on the raster and how many there are, plus one line saying either how much cell area the grid cost (`holes`) or that the cells were not grown and the slot centres moved instead (`slots`) — or `off` |
 
-`_holes_on_grid` re-checks every hole centre of every area against the raster
+Under `slots` the `Datum:` block also carries a `WARNING:` line when
+`slot_offset` is smaller than the dotted band `dot_line_gap/2 + dot_dia/2`:
+the cut would then run into the slots.
+
+`_pins_on_grid` re-checks every *pin* centre of every area against the raster
 from the sheet origin with `_FIT_EPS` tolerance, so the report verifies the
 invariant rather than asserting it. `_grid_waste` sums
 `area.w * area.h - (board.width + gap) * (board.height + gap)` over all areas:
 the square millimetres the grid cost against plain `board + gap`.
 
 Then one block per area: the label (with `(mirrored)`), the cell rectangle, the
-board rectangle and its size, the dowel holes both in sheet coordinates and
-relative to the bottom left corner of the board — the number a fixture plate is
-drilled from — followed by the paste opening count, the candidate pads by state
+board rectangle and its size, then the datum. Under `slots` that is the datum
+corner, the three slots as `(cx, cy) w x h`, the three jig pin centres and a
+`nesting:` line giving the push direction in sheet *and* board coordinates (a
+mirrored side is pushed toward the board's physical bottom-right). Under
+`holes` it is the four hole centres and the same four as pins. Every coordinate
+is printed twice, on the sheet and relative to the bottom left corner of the
+board — the second is the number a fixture plate is drilled from. A pin that
+could not be put on the raster is marked `OFF GRID (the cell is too small for
+it)`. After the datum come the paste opening count, the candidate pads by state
 and the closed opening count. The last line counts the divider dots, their
 diameter and pitch, the number of dotted lines, whether an edge is one line or
 two, and whether the block boundary is included.
@@ -293,45 +408,55 @@ two, and whether the block boundary is included.
 ## Worked example
 
 Eight KiCad gerber zips in one folder, `--batch --no-open`, everything left at
-the defaults: 380x280 landscape, `gap` 30, holes on at 5 mm diameter and 2 mm
-inset, dots 0.5 mm at 3 mm pitch, `dot_line_gap` 2.5, `hole_grid` 8,
-`outer_border` off, `sort = height`.
+the defaults: 380x280 landscape, `gap` 30, `datum = slots` (4.5 x 12 mm slots,
+2.25 mm offset, 8 mm corner distance, 3 mm web, 3 mm pins), dots 0.5 mm at 3 mm
+pitch, `dot_line_gap` 2.5, `hole_grid` 8, `outer_border` off, `sort = height`.
 
-The first pack sees all 13 relevant sides. One cell does not fit, the best-area
-heuristic wins, and the block measures **433.0 x 265.0 mm** — `DOES NOT FIT`.
-Before generating, the CLI drops every enabled side without a single opening:
-`PhotoAmp bottom` has no paste layer and nothing was opened on it, so it goes,
-and the remaining 12 sides are packed again. This time the bottom-left
-heuristic wins and the block is **353.00 x 273.00 mm at (11.50, 3.50)..(364.50,
-276.50)** — it fits. Dropping one side changes both the block and the winning
+The first pack sees all 13 relevant sides and the block measures
+**371.65 x 244.02 mm** — it fits. Before generating, the CLI drops every enabled
+side without a single opening: `PhotoAmp bottom` has no paste layer and nothing
+was opened on it, so it goes, and the remaining 12 sides are packed again, to
+**371.65 x 204.02 mm at (2.75, 34.75)..(374.40, 238.77)**, bottom-left
+heuristic. Dropping one side changes both the block and sometimes the winning
 heuristic, which is worth remembering when comparing the first preview with the
 generated one.
 
 | cell | side | x | y | w | h |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1 | LED lamp for gardening top | 11.50 | 3.50 | 137.0 | 113.0 |
-| 2 | alacrity badge top | 155.50 | 3.50 | 121.0 | 89.0 |
-| 3 | alacrity badge bottom (mirrored) | 155.50 | 99.50 | 121.0 | 89.0 |
-| 4 | Midea WiFi Dongle top | 283.50 | 3.50 | 57.0 | 73.0 |
-| 5 | Midea WiFi Dongle bottom (mirrored) | 283.50 | 83.50 | 57.0 | 73.0 |
-| 6 | indxworks top | 11.50 | 123.50 | 57.0 | 65.0 |
-| 7 | indxworks bottom (mirrored) | 75.50 | 123.50 | 57.0 | 65.0 |
-| 8 | airbox top | 283.50 | 163.50 | 81.0 | 57.0 |
-| 9 | PhotoAmp top | 11.50 | 195.50 | 121.0 | 49.0 |
-| 10 | KliFan bottom (mirrored) | 139.50 | 195.50 | 97.0 | 49.0 |
-| 11 | RBARF top | 243.50 | 227.50 | 49.0 | 49.0 |
-| 12 | RBARF bottom (mirrored) | 299.50 | 227.50 | 49.0 | 49.0 |
+| 1 | LED lamp for gardening top | 2.75 | 34.75 | 130.05 | 108.05 |
+| 2 | alacrity badge top | 138.75 | 34.75 | 115.65 | 84.05 |
+| 3 | alacrity badge bottom (mirrored) | 258.75 | 34.75 | 115.65 | 84.05 |
+| 4 | Midea WiFi Dongle top | 138.75 | 122.75 | 50.04 | 66.23 |
+| 5 | Midea WiFi Dongle bottom (mirrored) | 194.75 | 122.75 | 50.04 | 66.23 |
+| 6 | indxworks top | 250.75 | 122.75 | 55.45 | 58.75 |
+| 7 | indxworks bottom (mirrored) | 306.75 | 122.75 | 55.45 | 58.75 |
+| 8 | airbox top | 2.75 | 146.75 | 80.85 | 50.12 |
+| 9 | PhotoAmp top | 250.75 | 186.75 | 118.44 | 44.02 |
+| 10 | KliFan bottom (mirrored) | 90.75 | 194.75 | 96.47 | 44.02 |
+| 11 | RBARF top | 90.75 | 146.75 | 43.40 | 41.61 |
+| 12 | RBARF bottom (mirrored) | 194.75 | 194.75 | 43.40 | 41.61 |
 
-The report for that run says: 12 cells placed with MaxRects (bottom-left),
-0 overflow, gap 30.0 mm (padding ≥ 15.0 mm), sort by height; all 48 dowel holes
-on the 8 mm grid; cells grown for the grid cost 9,090.9 mm2 more than
-`board + gap`; and 2019 divider dots on 78 dotted lines.
+Every cell is exactly `board + gap`: no cell is grown, because 15 mm of padding
+already covers `min_pad_for_slots`. The report says 12 cells placed with
+MaxRects (bottom-left), 0 overflow, all 36 pins (12 cells x 3) on the 8 mm
+grid, the cells not grown for it, and 1838 divider dots on 82 dotted lines —
+fewer dots than the same sheet without slots, because the dots that would fall
+inside a slot are dropped.
 
-Switching the grid off (`hole_grid = 0`) changes the picture: all 13 sides then
-fit, the bottom-left heuristic wins, the block shrinks to 361.35 x 230.84 mm
-and the RBARF cell is exactly 43.405 x 41.610 mm. The grid buys a fixture plate
-with one hole raster at the price of roughly 9,100 mm2 of cell area and, on this
-set, of one board's worth of room.
+The same set with the other two datums, everything else unchanged:
+
+| `datum` | block after dropping `PhotoAmp bottom` | cells | grid |
+| --- | --- | --- | --- |
+| `slots` | 371.65 x 204.02 mm | exactly `board + gap` | 36 pins on the raster, no growth |
+| `holes` | 353.00 x 273.00 mm | grown by 9,090.9 mm2 in total | 48 pins on the raster |
+| `none` | 361.35 x 194.30 mm | exactly `board + gap` | off (no pins to align) |
+
+`holes` produces a narrower but much taller block: every cell is padded out to
+the next grid multiple, RBARF's 43.405 x 41.610 mm becoming 49 x 49 mm. `slots`
+gets the same fixture-plate raster for free, because only the slot centres have
+to move. `none` is the floor — 371.65 - 361.35 = 10.3 mm of the slots block is
+the extra width `2 * slot_corner + slot_length = 28` mm forces on the narrowest
+cells.
 
 ## Performance
 
@@ -340,8 +465,12 @@ projects (13 sides, mean of 50 calls):
 
 | configuration | time per `pack` |
 | --- | --- |
-| default, `hole_grid = 8` | ~2.7 ms |
+| `datum = holes`, `hole_grid = 8` | ~2.7 ms |
 | `hole_grid = 0` | ~1.5 ms |
+
+The `slots` datum adds three slots and a `_Cover` lookup per dot on top of the
+grid-free packing; it is in the same range.
+
 
 The TUI re-packs whenever a side is toggled, a sheet size is picked or a layout
 parameter changes, and the Stencil page packs once per size and orientation to
@@ -354,7 +483,8 @@ dominates everything the layout does; see [`render.md`](render.md).
 * [`architecture.md`](architecture.md) — where `pack` sits in the pipeline.
 * [`data-model.md`](data-model.md) — `LayoutParams`, `Area` and `Layout` field
   by field, and the three coordinate systems.
-* [`render.md`](render.md) — how the cells, dividers, dots and holes are drawn.
+* [`render.md`](render.md) — how the cells, dividers, dots and the datum are
+  drawn.
 * [`development.md`](development.md) — adding a layout parameter end to end.
-* [`kinematic-alignment.md`](kinematic-alignment.md) — a separate design study
-  on locating the cut stencil pieces on a pin jig.
+* [`kinematic-alignment.md`](kinematic-alignment.md) — the design study the
+  `slots` datum comes from.

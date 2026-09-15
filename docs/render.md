@@ -25,7 +25,7 @@ file to the desktop viewer.
    `frame.to_px`. Several line widths are derived from
    `scale = ppmm / _REFERENCE_PPMM`: `thin` (1 px at 20 px/mm), `outline_w`
    (min 2), `select_w` (min 3), and the dash/space lengths of the guides.
-3. **Hole grid.** `_draw_hole_grid` paints one hairline per `hole_grid`
+3. **Pin grid.** `_draw_hole_grid` paints one hairline per `hole_grid`
    multiple, under everything else.
 4. **Divider guides.** A faint dashed line (`COLOR_GUIDE`) under every entry of
    `layout.dividers` — there are two per cell edge. The dots themselves are the
@@ -36,9 +36,23 @@ file to the desktop viewer.
    `side.active_paste_objects` into `openings`, `side.closed_paste_objects`
    into `ignored`, and each candidate into `openings` / `ignored` / `undefined`
    according to its state.
-6. **Dots and holes.** `layout.dots` and every `area.holes` centre are added to
-   the `openings` mask as ellipses; they are already in sheet coordinates, so
-   only `to_px` is applied. The radius is clamped to at least 1 px.
+6. **Dots and the datum openings.** `layout.dots` and every `area.holes` centre
+   are added to the `openings` mask as ellipses, and every `area.slots` entry
+   as an obround; they are already in sheet coordinates, so only `to_px` is
+   applied (the slots go through `_fill_geometry` with the identity matrix).
+   The ellipse radius is clamped to at least 1 px. `_obround(cx, cy, w, h)`
+   builds the stadium polygon — a segment of length `|w - h|` buffered by
+   `min(w, h)/2`, a plain circle when the two are equal — which is exactly the
+   shape of the `O` aperture the writer flashes for that slot.
+6a. **The jig.** `_draw_datum` draws, on top of the openings, one dashed blue
+   ghost circle (`COLOR_PIN`) per entry of `area.pins` — where the fixture pin
+   comes up through the foil, through a slot or through a dowel hole, for
+   either datum, `pin_dia` wide for `slots` and `hole_dia` for `holes`. Under
+   the `slots` datum each cell additionally gets an orange `COLOR_DATUM`
+   bracket at its `datum_corner` (two legs of at most `_DATUM_LEG_MM` = 4 mm,
+   shortened on a small cell) and a short green `COLOR_NEST` arrow running down
+   the diagonal toward it, showing which way the piece is pushed. The arrow is
+   skipped when the padding leaves it less than 3 mm of run.
 7. **Composite copper, then pads.**
 8. **Sheet rectangle and board outlines.** The stencil boundary is a rectangle
    from `(0, 0)` to `(width, height)` in `COLOR_SHEET`. Each area then gets its
@@ -160,11 +174,11 @@ The five masks, in the order they are composited:
 | `copper` | `COLOR_COPPER` `#2e2e2e` | every object of the copper layer |
 | `pads` | `COLOR_PAD` `#5a5a5a` | the geometry of every detected pad, pasted ones included |
 | `ignored` | `COLOR_IGNORE` `#3a5fcd` | closed paste openings and candidates set to `ignore` |
-| `openings` | `COLOR_OPEN` `#ff2a2a` | everything that is cut |
+| `openings` | `COLOR_OPEN` `#ff2a2a` | everything that is cut, alignment slots and dowel holes included |
 | `undefined` | `COLOR_UNDEFINED` `#ffd000` | candidates still `undefined` |
 
 The `openings` mask is the important one: it holds the active paste objects,
-the pads the user opened, every divider dot and every dowel hole — exactly the
+the pads the user opened, every divider dot and every datum opening — exactly the
 set of shapes that ends up in `stencil-F_Paste.gbr`. Paste openings the user
 closed are not simply left out; they are drawn in the `ignored` blue, so the
 change stays visible against the copper underneath.
@@ -176,7 +190,10 @@ The remaining colours are drawn as lines or text rather than through masks:
 | `BACKGROUND` | `#141414` | the image ground |
 | `COLOR_SHEET` | `#8a8a8a` | the stencil boundary rectangle |
 | `COLOR_GUIDE` | `#333333` | dashed guide under every divider line |
-| `COLOR_GRID` | `#202020` | the dowel hole grid hairlines |
+| `COLOR_GRID` | `#202020` | the jig pin grid hairlines |
+| `COLOR_PIN` | `#4aa3ff` | dashed ghost circle of a jig pin (`_dashed_circle`: 22° dashes, a plain ring below 3 px radius) |
+| `COLOR_DATUM` | `#ff9a1f` | the bracket at the corner the piece is pushed into (`slots`) |
+| `COLOR_NEST` | `#39d98a` | the arrow showing the nesting direction (`slots`) |
 | `COLOR_OUTLINE` | `#c8c8c8` | board outlines |
 | `COLOR_SELECTED` | `#00e5ff` | the pad under the TUI cursor |
 | `COLOR_LABEL` | `#dddddd` | cell labels and the legend |
@@ -200,11 +217,13 @@ at all.
 Where they are used:
 
 - **Cell label** — `"<project> · <side>"` plus `" (mirrored)"`, drawn inside
-  the cell 1 mm below its top edge, starting `hole_span + 1.0` mm from the left
-  cell edge (`hole_span = hole_offset + hole_dia/2`, so the text begins right
-  of the top-left dowel hole). The available width stops the same distance
-  before the right cell edge when holes are on, so the label never runs into
-  the top-right hole.
+  the cell 1 mm below its top edge, starting `left_span + 1.0` mm from the left
+  cell edge and stopping `right_span + 1.0` mm before the right one, so it
+  never runs into a datum feature. The two spans depend on the datum: for
+  `holes` both are `hole_offset + hole_dia/2` (clear of the two top holes), for
+  `slots` `left_span = slot_inner` and `right_span = 0` (the bottom slots are
+  low and the left slot is at mid height, so only the left edge is in the way),
+  and for `none` both are 0.
 - **Component box** — the reference, drawn with `ref_font`
   (`max(11, round(1.1 * ppmm))`) above the top-left corner of the box.
 - **Selected pad** — `pad.label` (`REF.pin`) in the same font, to the right of
@@ -214,7 +233,7 @@ Where they are used:
   `   —  DOES NOT FIT` tail is measured separately and drawn in `COLOR_OPEN`
   right after the fitted legend text.
 
-## Rulers and the hole grid
+## Rulers and the pin grid
 
 `_draw_rulers` paints the two band rectangles over the already drawn content
 (leaving the row and column of the stencil boundary itself untouched), then
@@ -226,10 +245,10 @@ and skipped when they would come within `0.35 * font_px` of the previous one.
 The bottom ruler carries X, the left ruler Y, and the Y numbers grow upwards.
 
 `_draw_hole_grid` draws one hairline per `hole_grid` multiple across the sheet,
-measured from the sheet origin exactly like the dowel holes, so every hole has
-to sit on a crossing — it is the visual check for the grid. It returns
-immediately when `hole_grid <= 0` or when the lines would be closer than two
-pixels.
+measured from the sheet origin exactly like the jig pins, so every blue ghost
+circle has to sit on a crossing — it is the visual check for the grid, and it
+works the same for both datums. It returns immediately when `hole_grid <= 0` or
+when the lines would be closer than two pixels.
 
 ## `open_file`
 
@@ -263,3 +282,8 @@ image area, not with the number of objects.
 
 See [architecture.md](architecture.md) for where rendering sits in the
 pipeline and [data-model.md](data-model.md) for the objects the renderer reads.
+
+## Example
+
+`figures/example-preview.png` is the preview rendered from the eight example
+boards with default settings (380 x 280 sheet, slots datum, 20 px/mm).

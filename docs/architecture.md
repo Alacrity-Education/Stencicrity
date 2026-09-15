@@ -2,7 +2,8 @@
 
 Stencicrity reads the gerber exports of several KiCad projects, places every
 board side on one stencil sheet of an orderable size, copies the solder-paste
-openings over, marks each cell with dotted cut lines and dowel-pin holes, asks
+openings over, marks each cell with dotted cut lines and the alignment datum
+(three obround slots by default, four dowel-pin holes for the legacy jig), asks
 the user what to do with the copper pads the paste layer does not cover, and
 writes a single `F_Paste` gerber (plus a copper reference layer, a zip, a
 preview PNG and a text report). Everything the user decides is stored in a
@@ -53,7 +54,7 @@ Step by step, with the functions that do the work:
 | 6 | First preview | `render.render_preview(layout, preview_path, px_per_mm=args.px_per_mm, title=name)`, then `render.open_file()` unless `--no-open` | Skipped with a warning when every side is switched off. |
 | 7 | The TUI | `tui.run_tui(all_pads, sides, config, on_preview=…, compute_layout=…, title=…)` | Skipped with `--batch`. The two callbacks are closures over `sides` and `config` defined in `_run`: `compute_layout(cfg)` is `pack(sides, cfg or config)` and `on_preview(pad, do_open)` re-packs, re-renders and optionally opens the PNG. Afterwards the configuration is saved again; a user who quit instead of generating gets exit code 1. |
 | 8 | Final pack | `layout.pack(final_sides, config)` | `final_sides` are the enabled sides that have at least one opening; sides with none are dropped and reported, and if nothing is left the run returns 2. This is a *second* packing over a possibly shorter list, so the final layout can differ from the one in the TUI. |
-| 9 | Write | `cli._write_paste`, `cli._write_copper`, `cli._write_outline`, `cli._zip_files`, `render.render_preview`, `layout.layout_report`, `cli._summary` | The paste layer carries the surviving paste objects, the opened pads, the divider dots and the dowel holes; the report is `layout_report()` followed by the same summary that is printed on stdout. |
+| 9 | Write | `cli._write_paste`, `cli._write_copper`, `cli._write_outline`, `cli._zip_files`, `render.render_preview`, `layout.layout_report`, `cli._summary` | The paste layer carries the surviving paste objects, the opened pads, the divider dots and the datum: obround slots (`writer.add_obround` over `area.slots`) for `datum = slots`, round holes (`writer.add_circle` over `area.holes`) for `datum = holes`, nothing for `none`; the report is `layout_report()` followed by the same summary that is printed on stdout. |
 
 With `--batch` the TUI is skipped, undefined pads stay closed, and two
 warnings are printed instead: how many pads were left undefined, and whether
@@ -115,7 +116,8 @@ writes it atomically through a temporary file in the same directory. Depends on
 **`pcbstencil/layout.py`** - the packer. `pack(sides, config) -> Layout` orders
 the enabled sides, turns each into a cell, places the cells with a MaxRects bin
 packer under three heuristics, centres the block, computes the divider lines,
-the dots and the dowel holes. `layout_report(layout, config)` renders the text
+the dots and the datum features (slots or dowel holes, plus the jig pin
+centres). `layout_report(layout, config)` renders the text
 report. Depends on `model` and `pads` (for `natural_key`) - no shapely.
 See [layout.md](layout.md).
 
@@ -214,7 +216,7 @@ relevant sides, ~4700 gerber objects), Python 3.14, shapely 2:
 | --- | --- | --- |
 | Discovery: read 76 archive members, classify them, parse the 40 gerber layers, compute the board bounding boxes | 0.08 s | Dominated by `GerberFile.bounds()`, which builds the geometry of every object. |
 | `detect_pads()` over all 13 sides | 0.19 s | One `STRtree` per side plus one intersection per pad/opening pair. |
-| `layout.pack()` over 13 sides | 2.7 ms with `hole_grid = 8`, 1.5 ms with the grid off | Three heuristics are run over the full cell list each time. |
+| `layout.pack()` over 13 sides | 2.7 ms with `datum = holes` and `hole_grid = 8`, 1.5 ms with the grid off | Three heuristics are run over the full cell list each time. |
 | `render_preview()` at 20 px/mm | 1.1 s | Produces a 7834 x 5859 px PNG of about 1.9 MB. |
 | The whole `--batch --no-open` run | 2.5 s | Two renders (first preview and final) are two thirds of it. |
 

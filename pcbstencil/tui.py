@@ -11,9 +11,11 @@ Pages (tabs in the header, switched with ``1``-``4`` or Tab / Shift-Tab):
 2. **Sides** - which project sides get a cell on the stencil.
 3. **Stencil** - the orderable sheet sizes and the orientation, with a
    fits / does not fit verdict for every preset.
-4. **Layout** - the numeric layout parameters (gap, dowel holes and their
-   grid, divider dots and the gap between the two dotted lines, outer border,
-   cell order).
+4. **Layout** - the layout parameters: gap, the ``datum`` (which alignment
+   features every cell gets: ``slots``, ``holes`` or ``none``), the numbers of
+   both datums and their pin grid, divider dots and the gap between the two
+   dotted lines, outer border, cell order.  The rows of the datum that is not
+   selected are drawn dimmed but stay editable.
 
 On the two list pages (Pads and Sides) ``/`` starts a vim like search: every
 printable character is appended to the query and the list is filtered while
@@ -40,6 +42,9 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Sequence, TypeVar
 
 from .model import (
+    DATUM_HOLES,
+    DATUM_MODES,
+    DATUM_SLOTS,
     ORIENTATION_LANDSCAPE,
     ORIENTATION_PORTRAIT,
     ORIENTATIONS,
@@ -597,17 +602,49 @@ class Field:
 
 LAYOUT_FIELDS: tuple[Field, ...] = (
     Field("gap", "spacing (gap between boards)", "length", "mm", 0.5, 0.0, "ge0"),
-    Field("holes", "holes", "bool"),
+    Field("datum", "datum (alignment features)", "choice",
+          choices=tuple(DATUM_MODES)),
     Field("hole_dia", "hole diameter", "length", "mm", 0.5, 0.1, "gt0"),
     Field("hole_inset", "hole inset (dotted line to hole edge)", "length", "mm", 0.5),
+    Field("slot_width", "slot width", "length", "mm", 0.5, 0.1, "gt0"),
+    Field("slot_length", "slot length", "length", "mm", 0.5, 0.1, "gt0"),
+    Field("slot_offset", "slot offset (edge to outer wall)", "length", "mm",
+          0.5, 0.0, "ge0"),
+    Field("slot_corner", "slot corner distance", "length", "mm", 0.5, 0.1, "gt0"),
+    Field("slot_web", "slot web (to board)", "length", "mm", 0.5, 0.1, "gt0"),
+    Field("pin_dia", "pin diameter", "length", "mm", 0.5, 0.1, "gt0"),
     Field("dot_dia", "dot diameter", "length", "mm", 0.5, 0.1, "gt0"),
     Field("dot_pitch", "dot pitch", "length", "mm", 0.5, 0.1, "gt0"),
     Field("dot_line_gap", "dotted line gap (0 = single line)", "length", "mm",
           0.5, 0.0, "ge0"),
-    Field("hole_grid", "hole grid (0 = off)", "length", "mm", 1.0, 0.0, "ge0"),
+    Field("hole_grid", "pin grid (0 = off)", "length", "mm", 1.0, 0.0, "ge0"),
     Field("outer_border", "outer border", "bool"),
     Field("sort", "sort", "choice", choices=tuple(SORT_ORDERS)),
 )
+
+#: Rows that only mean something for one datum; they are dimmed under any
+#: other one but stay editable, so a value can be set before switching over.
+DATUM_ROWS: dict[str, str] = {
+    "hole_dia": DATUM_HOLES,
+    "hole_inset": DATUM_HOLES,
+    "slot_width": DATUM_SLOTS,
+    "slot_length": DATUM_SLOTS,
+    "slot_offset": DATUM_SLOTS,
+    "slot_corner": DATUM_SLOTS,
+    "slot_web": DATUM_SLOTS,
+    "pin_dia": DATUM_SLOTS,
+}
+
+
+def field_applies(field: Field, params) -> bool:
+    """Does this row matter for the datum the layout is currently set to?
+
+    A row that does not (the hole rows under ``slots``, the slot rows under
+    ``holes``, both under ``none``) is only drawn dimmed - it can still be
+    stepped and edited.
+    """
+    want = DATUM_ROWS.get(field.attr)
+    return want is None or want == getattr(params, "datum", None)
 
 
 def value_text(field: Field, params) -> str:
@@ -1122,6 +1159,8 @@ class _App:
             cursor = index == self.index
             editing = self.editing if (cursor and self.editing is not None) else None
             attr = curses.A_REVERSE if cursor else curses.A_NORMAL
+            if not field_applies(field, self.config.layout):
+                attr |= curses.A_DIM
             self._put(win, y0 + row, 0,
                       format_field_row(field, self.config.layout, cursor=cursor,
                                        editing=editing), attr)

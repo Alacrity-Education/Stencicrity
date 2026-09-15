@@ -12,7 +12,7 @@ Three of them, in this order:
 | Name | Origin | Unit | Used by |
 | --- | --- | --- | --- |
 | Board coordinates | whatever the KiCad export used (often negative Y) | mm | `GerberFile.objects`, `Pad.x/y`, `Pad.geom`, `Project.bbox` |
-| Sheet coordinates | bottom left corner of the stencil, X right, Y up | mm | `Area`, `Layout`, the divider lines, the dots, the dowel holes, the written gerbers, the report |
+| Sheet coordinates | bottom left corner of the stencil, X right, Y up | mm | `Area`, `Layout`, the divider lines, the dots, the datum (slots, holes, pins), the written gerbers, the report |
 | Image pixels | top left corner of the PNG, X right, Y **down** | px | `render.py` only |
 
 Board to sheet is one `Transform` per placed side. Sheet to pixels is
@@ -106,9 +106,15 @@ classDiagram
     }
     class LayoutParams {
         +float gap
-        +bool holes
+        +str datum
         +float hole_dia
         +float hole_inset
+        +float slot_width
+        +float slot_length
+        +float slot_offset
+        +float slot_corner
+        +float slot_web
+        +float pin_dia
         +float dot_dia
         +float dot_pitch
         +float dot_line_gap
@@ -116,7 +122,12 @@ classDiagram
         +bool outer_border
         +str sort
         +pad float
+        +holes bool
+        +slots bool
         +hole_offset float
+        +slot_inner float
+        +pin_offset float
+        +min_pad_for_slots float
     }
     class Layout {
         +LayoutParams params
@@ -139,6 +150,9 @@ classDiagram
         +int row
         +bool overflow
         +list holes
+        +list slots
+        +list pins
+        +tuple datum_corner
         +rect tuple
     }
     class Transform {
@@ -266,23 +280,42 @@ The `[layout]` section and the Layout page of the TUI, one dataclass.
 | Field | Unit | Default | Meaning |
 | --- | --- | --- | --- |
 | `gap` | mm | 30.0 | Spacing between two neighbouring boards. Half of it is the padding around each board. |
-| `holes` | - | True | Cut dowel pin holes at all. |
-| `hole_dia` | mm | 5.0 | Dowel pin hole diameter. |
+| `datum` | - | `"slots"` | Which alignment features every cell gets: `DATUM_SLOTS`, `DATUM_HOLES` or `DATUM_NONE` (`"slots"` / `"holes"` / `"none"`, the tuple `DATUM_MODES`). |
+| `hole_dia` | mm | 5.0 | Dowel pin hole diameter (`holes` datum). |
 | `hole_inset` | mm | 2.0 | Cell edge (the centre line of the dotted border) to the *edge* of the hole. May be negative, which puts the hole on the line. |
+| `slot_width` | mm | 4.5 | Slot size *across* the cell edge (`slots` datum). |
+| `slot_length` | mm | 12.0 | Slot size *along* the cell edge. |
+| `slot_offset` | mm | 2.25 | Cell edge to the slot's outer wall. Keeps the slot out of the scissor zone; may be 0 but never negative. |
+| `slot_corner` | mm | 8.0 | Cell corner to the centre of each of the two bottom slots, along the bottom edge. |
+| `slot_web` | mm | 3.0 | Least foil between a slot's inner wall and the board. A cell grows until it fits. |
+| `pin_dia` | mm | 3.0 | Jig pin diameter for the `slots` datum; the `holes` datum uses `hole_dia` pins. |
 | `dot_dia` | mm | 0.5 | Divider dot diameter. Also the minimum distance used to deduplicate dots. |
 | `dot_pitch` | mm | 3.0 | Centre-to-centre spacing of the divider dots. |
 | `dot_line_gap` | mm | 2.5 | Distance between the two parallel dotted lines of one cell edge; 0 collapses them into a single line on the edge. |
-| `hole_grid` | mm | 8.0 | Common grid every dowel hole centre must land on, measured from the sheet origin. 0 switches the grid off. |
+| `hole_grid` | mm | 8.0 | Common grid every *jig pin centre* must land on, measured from the sheet origin - for either datum. 0 switches the grid off. |
 | `outer_border` | - | False | Also dot the cell edges that lie on the outer boundary of the block. |
 | `sort` | - | `"height"` | `height` (tallest board first) or `name`. |
 
-Two derived values, both used all over `layout.py`:
+The derived values, all used in `layout.py`:
 
-* `pad` = `gap / 2` - the padding between a board and its cell edge. With a
-  hole grid the cell is grown, so `pad` becomes the *minimum* padding and the
-  report prints `padding ≥ 15.0 mm`.
-* `hole_offset` = `hole_inset + hole_dia / 2` - the distance from the cell edge
-  to the hole *centre*. With the defaults that is 4.5 mm.
+* `pad` = `gap / 2` - the padding between a board and its cell edge. The cell
+  grows for the hole grid and for the slot padding, so `pad` becomes the
+  *minimum* padding and the report prints `padding ≥ 15.0 mm`.
+* `holes` - **a read-only property**, `datum == "holes"`. It used to be a
+  writable boolean field; everything that set `holes=True/False` now sets
+  `datum` instead (`config.py` still reads a legacy `holes = on | off` line and
+  maps it, see [pads-and-config.md](pads-and-config.md)).
+* `slots` - the same for `datum == "slots"`.
+* `hole_offset` = `hole_inset + hole_dia / 2` - cell edge to the hole *centre*
+  (`holes` datum). With the defaults that is 4.5 mm.
+* `slot_inner` = `slot_offset + slot_width` - cell edge to the slot's inner
+  wall, the wall the pin touches. 6.75 mm by default.
+* `pin_offset` - cell edge to the pin centre of whichever datum is active:
+  `slot_inner - pin_dia / 2` (5.25 mm) for slots, `hole_offset` for holes. This
+  is the number the grid arithmetic snaps.
+* `min_pad_for_slots` = `slot_inner + slot_web` - the smallest cell padding
+  that hosts a slot plus its web to the board. 9.75 mm by default, so the
+  default 15 mm padding is comfortable.
 
 ### `Config`
 
@@ -316,12 +349,15 @@ The placement of one side, produced by `layout.pack()`.
 | --- | --- |
 | `side` | The `Side` placed here. |
 | `x`, `y` | Bottom left corner of the *cell* in sheet coordinates. |
-| `w`, `h` | Cell size: board plus gap, grown for the hole grid. |
+| `w`, `h` | Cell size: board plus gap, grown for the datum (the slot padding, or the hole grid). |
 | `board_rect` | `(minx, miny, maxx, maxy)` where the board bounding box lands on the sheet. The board is centred in the cell. |
 | `transform` | Board to sheet for this side's objects. |
 | `row` | The index in the packing order. Informational only - there are no rows, the cells are packed with MaxRects. |
 | `overflow` | The cell did not fit and was parked to the right of the sheet. |
-| `holes` | The dowel hole centres of this cell in sheet coordinates. Empty when `holes` is off *or* when a neighbouring cell already carries the same hole. |
+| `holes` | The dowel hole centres of this cell in sheet coordinates (`holes` datum). Empty under any other datum *or* when a neighbouring cell already carries the same hole. |
+| `slots` | The obround slots of this cell as `(cx, cy, w, h)` in sheet coordinates, `w` along x and `h` along y (`slots` datum; empty otherwise). Three per cell: two on the bottom edge (`length x width`) and one on the left edge (`width x length`). |
+| `pins` | The jig pin centres in sheet coordinates, for *either* datum: tangent to the slots' inner walls for `slots`, identical to `holes` for `holes`, empty for `none`. This is what `hole_grid` snaps. |
+| `datum_corner` | The cell corner the cut-out piece is pushed toward - the cell's bottom left, `(x, y)`. For a mirrored side that is the board's physical bottom *right*. |
 
 `rect` is `(x, y, x + w, y + h)`.
 

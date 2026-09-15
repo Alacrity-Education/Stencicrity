@@ -11,9 +11,15 @@ Cells can sit anywhere on the sheet (they are packed with MaxRects, see
 :mod:`pcbstencil.layout`); the only cell markings drawn are a faint dashed guide
 under every dotted line (two of them per cell edge, ``dot_line_gap`` apart) and,
 when ``hole_grid`` is on, a very faint grid of that pitch over the whole sheet,
-so the dowel holes can be seen sitting on its intersections.  Cells that did not
+so the jig pins can be seen sitting on its intersections.  Cells that did not
 fit are drawn outside the stencil boundary - the image simply grows to cover
 them.
+
+The alignment datum is drawn on top of the openings: the slots are openings
+themselves (red obrounds), every jig pin is a dashed blue ghost circle where
+the fixture pin comes through the foil, and the ``slots`` datum also marks the
+corner the piece is pushed into with an orange bracket and a small green arrow
+pointing at it.
 
 The image carries a millimetre ruler along its left and bottom edge (origin at
 the bottom left corner of the stencil) and a legend band underneath.  Sheet
@@ -32,6 +38,7 @@ from typing import Callable, Iterable, Optional
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 from shapely.affinity import affine_transform
+from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 
 from .gerber import Region, Stroke, contour_points, object_geometry, polygons_of
@@ -50,6 +57,9 @@ COLOR_IGNORE = "#3a5fcd"
 COLOR_OPEN = "#ff2a2a"
 COLOR_UNDEFINED = "#ffd000"
 COLOR_SELECTED = "#00e5ff"
+COLOR_PIN = "#4aa3ff"            # ghost outline of a jig pin (dashed)
+COLOR_DATUM = "#ff9a1f"          # bracket at the corner the piece is pushed into
+COLOR_NEST = "#39d98a"           # arrow showing the nesting direction
 COLOR_LABEL = "#dddddd"
 COLOR_RULER_BG = "#1c1c1c"
 COLOR_RULER = "#b0b0b0"
@@ -252,6 +262,38 @@ def _dashed_line(draw: ImageDraw.ImageDraw, p0: tuple[float, float], p1: tuple[f
         pos = end + space
 
 
+def _dashed_circle(draw: ImageDraw.ImageDraw, cx: float, cy: float, r: float,
+                   color: str, width: int, dash_deg: float = 22.0,
+                   gap_deg: float = 14.0) -> None:
+    """A dashed circle outline (a ghost jig pin) around a pixel centre."""
+    if r <= 0.0:
+        return
+    box = [cx - r, cy - r, cx + r, cy + r]
+    if r < 3.0:                     # too small for dashes: a plain ring
+        draw.ellipse(box, outline=color, width=width)
+        return
+    angle = 0.0
+    while angle < 360.0:
+        draw.arc(box, angle, min(360.0, angle + dash_deg), fill=color, width=width)
+        angle += dash_deg + gap_deg
+
+
+def _arrow(draw: ImageDraw.ImageDraw, tail: tuple[float, float],
+           tip: tuple[float, float], color: str, width: int, head: float) -> None:
+    """A thin arrow from ``tail`` to ``tip`` (pixel points) with a small head."""
+    dx, dy = tip[0] - tail[0], tip[1] - tail[1]
+    length = math.hypot(dx, dy)
+    if length <= 0.0:
+        return
+    ux, uy = dx / length, dy / length
+    draw.line([tail, tip], fill=color, width=width)
+    for sign in (-1.0, 1.0):
+        # rotate the reversed direction by ±30 degrees for the two barbs
+        ca, sa = math.cos(math.radians(30.0)) , math.sin(math.radians(30.0)) * sign
+        bx, by = -ux * ca - (-uy) * sa, -uy * ca + (-ux) * sa
+        draw.line([tip, (tip[0] + bx * head, tip[1] + by * head)], fill=color, width=width)
+
+
 # --------------------------------------------------------------------------- #
 # Image geometry: rulers, legend band and scale
 # --------------------------------------------------------------------------- #
@@ -430,6 +472,62 @@ def _outline_paths(area: Area) -> list[list[tuple[float, float]]]:
     return paths
 
 
+#: Sheet coordinates are already sheet coordinates: no transform needed.
+_IDENTITY = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+_DATUM_LEG_MM = 4.0          # length of the two legs of the datum corner bracket
+_NEST_TAIL_MM = 16.0         # the nesting arrow runs from here ...
+_NEST_TIP_MM = 10.0          # ... to here, on the cell diagonal from the corner
+
+
+def _obround(cx: float, cy: float, w: float, h: float) -> BaseGeometry:
+    """An axis-aligned obround (stadium) polygon, sheet coordinates.
+
+    ``w`` is the size along x, ``h`` along y; the short sides are half circles
+    (a circle when the two are equal), exactly like the ``O`` gerber aperture
+    the writer flashes for a slot.
+    """
+    r = min(w, h) / 2.0
+    ex, ey = max(0.0, w / 2.0 - r), max(0.0, h / 2.0 - r)
+    if ex <= 0.0 and ey <= 0.0:
+        return Point(cx, cy).buffer(r, quad_segs=24)
+    return LineString([(cx - ex, cy - ey), (cx + ex, cy + ey)]).buffer(r, quad_segs=24)
+
+
+def _draw_datum(draw: ImageDraw.ImageDraw, layout: Layout,
+                to_px: Callable[[float, float], tuple[float, float]],
+                ppmm: float, scale: float) -> None:
+    """Jig pins (both datums) and the datum corner marks (slots datum).
+
+    Every pin is a dashed blue ghost circle where the fixture pin comes up
+    through the foil - through a slot, or through a dowel hole.  With the
+    slots datum the corner the piece is pushed into also gets an orange
+    bracket and a small green arrow pointing at it from inside the cell.
+    """
+    params = layout.params
+    pin_dia = params.pin_dia if params.slots else params.hole_dia
+    pin_w = max(1, min(2, int(round(scale))))
+    for area in layout.areas:
+        for px, py in area.pins:
+            cx, cy = to_px(px, py)
+            _dashed_circle(draw, cx, cy, pin_dia / 2.0 * ppmm, COLOR_PIN, pin_w)
+    if not params.slots:
+        return
+    leg = max(1, int(round(2 * scale)))
+    for area in layout.areas:
+        dx, dy = area.datum_corner
+        span = min(_DATUM_LEG_MM, area.w / 4.0, area.h / 4.0)
+        draw.line([to_px(dx + span, dy), to_px(dx, dy), to_px(dx, dy + span)],
+                  fill=COLOR_DATUM, width=leg, joint="curve")
+        # The arrow runs along the diagonal inside the padding: it stops short
+        # of the board and its tip stays clear of the two slots.
+        pad = min(area.board_rect[0] - dx, area.board_rect[1] - dy)
+        tail = min(_NEST_TAIL_MM, pad - 0.75)
+        tip = max(params.slot_inner + 1.5, tail - _NEST_TAIL_MM + _NEST_TIP_MM)
+        if tail - tip >= 3.0:
+            _arrow(draw, to_px(dx + tail, dy + tail), to_px(dx + tip, dy + tip),
+                   COLOR_NEST, max(1, int(round(scale))), max(4.0, 2.0 * ppmm))
+
+
 def _content_size(layout: Layout) -> tuple[float, float]:
     """Sheet area the image has to cover: the stencil plus any overflowing block."""
     return (max(layout.width, layout.block[2], 1.0),
@@ -501,7 +599,7 @@ def render_preview(layout: Layout, path: str, *, px_per_mm: float = 20.0, max_px
             elif pad.state == STATE_UNDEFINED:
                 _fill_geometry(undefined, pad.geom, matrix, to_px)
 
-    # Dots and dowel holes are already in sheet coordinates.
+    # Dots and the datum openings are already in sheet coordinates.
     for cx, cy in layout.dots:
         px, py = to_px(cx, cy)
         openings.ellipse(px, py, max(1.0, params.dot_dia / 2.0 * ppmm))
@@ -509,6 +607,8 @@ def render_preview(layout: Layout, path: str, *, px_per_mm: float = 20.0, max_px
         for hx, hy in area.holes:
             px, py = to_px(hx, hy)
             openings.ellipse(px, py, max(1.0, params.hole_dia / 2.0 * ppmm))
+        for sx, sy, sw, sh in area.slots:
+            _fill_geometry(openings, _obround(sx, sy, sw, sh), _IDENTITY, to_px)
 
     # 2. Copper, then every pad.
     copper.composite(img, COLOR_COPPER)
@@ -534,6 +634,9 @@ def render_preview(layout: Layout, path: str, *, px_per_mm: float = 20.0, max_px
     ignored.composite(img, COLOR_IGNORE)
     openings.composite(img, COLOR_OPEN)
     undefined.composite(img, COLOR_UNDEFINED)
+
+    # 6a. The jig: a ghost circle per pin, the datum corner of every cell.
+    _draw_datum(draw, layout, to_px, ppmm, scale)
 
     # 6b. One labelled box per component that still has undefined pads.
     ref_font = _font(max(11, int(round(1.1 * ppmm))))
@@ -567,12 +670,16 @@ def render_preview(layout: Layout, path: str, *, px_per_mm: float = 20.0, max_px
 
     # 8. Cell labels, inside the cell, right of the top left dowel hole.
     label_size = max(14, int(round(2.5 * ppmm)))
-    hole_span = max(params.hole_offset + params.hole_dia / 2.0, 0.0)
-    right_span = hole_span if params.holes else 0.0
+    if params.holes:
+        left_span = right_span = max(params.hole_offset + params.hole_dia / 2.0, 0.0)
+    elif params.slots:
+        left_span, right_span = params.slot_inner, 0.0    # slots are low or at mid height
+    else:
+        left_span = right_span = 0.0
     for area in layout.areas:
         side = area.side
         text = f"{side.project.name} · {side.name}" + (" (mirrored)" if side.mirror else "")
-        lx = area.x + hole_span + 1.0
+        lx = area.x + left_span + 1.0
         px, py = to_px(lx, area.y + area.h - 1.0)
         available = max(0.0, (area.x + area.w - right_span - 1.0) - lx) * ppmm
         font, text = _fit_label(text, label_size, available)
@@ -587,7 +694,8 @@ def render_preview(layout: Layout, path: str, *, px_per_mm: float = 20.0, max_px
               f"   block {layout.block_width:.1f} x {layout.block_height:.1f} mm"
               f"   {len(layout.areas)} cell(s)"
               "   red = stencil opening   yellow = undefined pad"
-              "   blue = ignored pad / closed opening   grey = copper")
+              "   blue = ignored pad / closed opening   grey = copper"
+              "   blue outline = jig pin")
     warning = "" if layout.fits else "   —  DOES NOT FIT"
     left = max(6, int(round(6 * scale)))
     legend_font = _fitted_font(legend + warning, max(12, int(round(frame.legend * 0.42))),
@@ -607,8 +715,8 @@ def _draw_hole_grid(draw: ImageDraw.ImageDraw, layout: Layout,
                     ppmm: float) -> None:
     """One hairline per ``hole_grid`` multiple over the sheet (nothing when off).
 
-    The grid is measured from the sheet origin, exactly like the dowel holes,
-    so every hole has to sit on a crossing.  It is skipped when the lines would
+    The grid is measured from the sheet origin, exactly like the jig pins, so
+    every pin has to sit on a crossing.  It is skipped when the lines would
     be closer than two pixels - at that scale it is noise, not information.
     """
     grid = layout.params.hole_grid

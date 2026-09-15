@@ -4,8 +4,8 @@ Stencicrity merges the solder-paste gerbers of several KiCad projects into one
 stencil order. We make many small boards, and each of them would use a few
 square centimetres of a 380 x 280 mm stencil sheet. So we put every board side
 on one sheet of a standard size, copy all paste openings over, mark the border
-of every board with dotted lines so the sheet can be cut apart, and add
-dowel-pin holes on a fixed grid so every cut-out piece fits the same fixture
+of every board with dotted lines so the sheet can be cut apart, and cut
+alignment features on a fixed grid so every cut-out piece fits the same fixture
 plate. The result is a single `F_Paste` gerber, packed in a zip with a copper
 reference layer, that a stencil house cuts like any other.
 
@@ -54,10 +54,11 @@ stencicrity.py` works as well.
 
 Every enabled side becomes a *cell*: the board's bounding box plus at least
 half the spacing on each of its four sides, so two neighbouring boards end up
-at least `spacing` (default 30 mm) apart; exactly that when the hole grid is
-off. Cells are not rotated. They are placed with a MaxRects bin packer; three
-heuristics (bottom-left, best short side fit, best area fit) are tried and the
-one that places the most cells in the smallest block wins. The block is then
+at least `spacing` (default 30 mm) apart — exactly that unless the cell has to
+grow, which only the alignment features below ever ask for. Cells are not
+rotated. They are placed with a MaxRects bin packer; three heuristics
+(bottom-left, best short side fit, best area fit) are tried and the one that
+places the most cells in the smallest block wins. The block is then
 centred on the sheet. Cells are offered to the packer tallest board first
 (`sort = height`) or alphabetically (`sort = name`); the top side of a board
 always comes right before its bottom.
@@ -72,21 +73,6 @@ coordinate are merged again so nothing is dotted twice, and the outer boundary
 of the whole block is left blank because nothing has to be cut apart there
 (`outer_border = on` dots it too).
 
-Every cell gets four dowel-pin holes (`hole_dia` 5 mm) inside its corners,
-`hole_inset` (2 mm) from the cell edge (the centre line of the dotted border)
-to the hole edge; a negative inset moves the hole onto the edge, and two cells
-that would share a hole get one. With `hole_grid` set (default 8 mm) every hole
-centre on the sheet lies on one common grid of that pitch, measured from the
-sheet origin. This is for a fixture plate with pins on an 8 mm raster that
-takes every cut-out piece without adjustment. To get there, each cell is grown
-until its hole-to-hole distance is a multiple of the pitch (the board stays
-centred, so the padding grows past half the spacing), the packer only puts
-cell corners where the holes land on the grid, and the block is centred by a
-whole number of pitches. Cells therefore do not always touch; the slivers
-between them are free space. The report says whether every hole is on the grid
-and how much cell area the grid cost. `hole_grid = 0` switches the grid off,
-`holes = off` cuts no holes.
-
 Bottom sides are placed mirrored (x to -x) so the piece matches the board once
 the board is flipped over; `--no-mirror-bottom` places them as they are.
 Sheet coordinates start at (0, 0) in the bottom left corner of the stencil, in
@@ -98,6 +84,51 @@ horizontal) or portrait. The Stencil page shows for every size and both orientat
 the current block fits. A cell that fits nowhere is parked to the right of the
 sheet, the header says DOES NOT FIT, the preview grows to show it, and
 generating asks for a second confirmation. The gerbers are written regardless.
+
+### Alignment
+
+Every cell carries the *datum* the jig locates the cut-out piece by. `datum`
+picks which one: `slots` (the default), `holes` (the older, simpler one) or
+`none`.
+
+**`slots`.** Three obround slots of `slot_width` x `slot_length`
+(4.5 x 12 mm) per cell: two along the bottom edge, `slot_corner` (8 mm) from
+the two bottom corners, and one along the left edge at mid height. Their outer
+wall is `slot_offset` (2.25 mm) inside the cell edge and the inner wall
+`slot_offset + slot_width` (6.75 mm), so a slot lies completely inside its own
+cell padding — it never crosses into a neighbouring cell and never touches the
+scissor zone, the band around the cell edge where the dotted lines run and the
+cut goes. Between a slot and the board there is always at least `slot_web`
+(3 mm) of foil; a cell whose padding cannot host a slot and that web is grown
+until it can (the board stays centred), which is the only reason a cell grows
+for the slots datum.
+
+The jig is a plate with three `pin_dia` (3 mm) pins. The piece is dropped over
+them so the pins come up through the slots, then pushed toward its bottom-left
+corner — its *datum corner* — until the slot wall nearest the board touches its
+pin. That is three contacts: the two bottom pins fix y and rotation, the left
+one fixes x. Because a bottom side is placed mirrored, its datum corner is the
+board's physical bottom-right; the report says so per cell.
+
+**`holes`.** Four round dowel-pin holes (`hole_dia` 5 mm) inside the cell
+corners, `hole_inset` (2 mm) from the cell edge (the centre line of the dotted
+border) to the hole edge; a negative inset moves the hole onto the edge, and
+two cells that would share a hole get one. Simple, but over-constrained: four
+pins in four holes only fit with clearance, so the piece can still shift.
+
+**The grid.** With `hole_grid` set (default 8 mm) every jig pin centre on the
+sheet lies on one common grid of that pitch, measured from the sheet origin —
+for a fixture plate with pins on an 8 mm raster that takes every cut-out piece
+without adjustment. The packer only puts cell corners where the pins land on
+the grid, and the block is centred by a whole number of pitches, so cells do
+not always touch; the slivers between them are free space. The two datums reach
+the grid differently: with `holes` each cell is grown until its hole-to-hole
+distance is a multiple of the pitch (the board stays centred, so the padding
+grows past half the spacing); with `slots` **the cells do not grow at all** —
+each slot centre simply slides along its own edge onto the nearest grid point
+inside the cell. The report says whether every pin is on the grid and, for
+`holes`, how much cell area the grid cost. `hole_grid = 0` switches the grid
+off, `datum = none` cuts no alignment features at all.
 
 ## Deciding pads
 
@@ -144,13 +175,19 @@ orientation = landscape   # landscape (long side horizontal) | portrait
 
 [layout]
 spacing = 30.0            # mm between neighbouring boards; the dotted border runs in the middle
-holes = on                # cut dowel pin holes near every cell corner
-hole_dia = 5.0            # mm
+datum = slots             # slots | holes | none - alignment features cut into every cell
+hole_dia = 5.0            # mm (holes datum)
 hole_inset = 2.0          # mm from the dotted line to the hole edge (negative = onto the line)
+slot_width = 4.5          # mm across the cell edge (slots datum)
+slot_length = 12.0        # mm along the cell edge (slots datum)
+slot_offset = 2.25        # mm from the cell edge to the slot's outer wall
+slot_corner = 8.0         # mm from the cell corner to the two bottom slot centres
+slot_web = 3.0            # mm of foil kept between a slot and the board; cells grow to hold it
+pin_dia = 3.0             # mm jig pin through a slot (the holes datum uses hole_dia)
 dot_dia = 0.5             # mm
 dot_pitch = 3.0           # mm
 dot_line_gap = 2.5        # mm between the two dotted border lines (0 = single line)
-hole_grid = 8.0           # dowel hole centres snap to this grid, cells grow to fit (0 = off)
+hole_grid = 8.0           # pin centres (holes or slots) snap to this grid, 0 = off
 outer_border = off        # also dot the cell edges on the outer boundary of the block
 sort = height             # height (tallest boards first) | name
 
@@ -191,19 +228,19 @@ footer lists the keys of the current page.
 | Pads | the candidates of the enabled sides: state, reference and pin, project, side, aperture function, shape, position; `*` adds the pasted pads (dimmed, marked with a `·`) so they can be closed |
 | Sides | switch board sides on and off; each row shows size, paste count and pads to decide |
 | Stencil | pick the sheet size; every row shows whether the block fits in landscape and in portrait |
-| Layout | spacing, holes, hole diameter and inset, dot diameter and pitch, dotted line gap, hole grid, outer border, sort order |
+| Layout | spacing, the datum (`slots`/`holes`/`none`), hole diameter and inset, the six slot numbers, dot diameter and pitch, dotted line gap, pin grid, outer border, sort order; the rows of the datum that is not selected are dimmed but stay editable |
 
 | key | action |
 | --- | --- |
 | `↑`/`↓`, `j`/`k`, `PgUp`/`PgDn`, `Home`/`End` | move |
-| `space` | Pads: cycle undefined → open → ignore → open ...; Sides: toggle; Stencil: pick; Layout: flip a switch or cycle the sort order |
+| `space` | Pads: cycle undefined → open → ignore → open ...; Sides: toggle; Stencil: pick; Layout: flip a switch, cycle the datum (slots → holes → none) or the sort order |
 | `o` / `i` | Pads: set open / ignore (`o` on the Stencil page toggles the orientation) |
 | `a` | Pads: apply the current pad's state to every pad of the same component |
 | `n` / `N` | Pads: next / previous undefined pad |
 | `*` | Pads: show all pads, including the ones with paste |
 | `A` / `N` | Sides: all on / all off |
-| `+` / `-` (also `→` / `←`) | Layout: step a number by 0.5 mm (1 mm for the hole grid) |
-| `e` or `Enter` | Layout: type a value (typing replaces, Backspace edits, Enter accepts, Esc cancels) |
+| `+` / `-` (also `→` / `←`) | Layout: step a number by 0.5 mm (1 mm for the pin grid), or cycle the datum |
+| `e` or `Enter` | Layout: type a value (typing replaces, Backspace edits, Enter accepts, Esc cancels); on the datum row it cycles |
 | `p` / `v` | re-render the preview / re-render and open it |
 | `Enter` on Pads, `g` elsewhere | generate; asks a second time when the layout does not fit |
 | `q` or `Esc` | quit without generating; the configuration is saved |
@@ -226,21 +263,30 @@ Everything goes to `--out` (default `./stencil-out`), prefixed with `--name`
 
 | file | content |
 | --- | --- |
-| `stencil-F_Paste.gbr` | the stencil: paste openings, opened pads, border dots, dowel holes |
+| `stencil-F_Paste.gbr` | the stencil: paste openings, opened pads, border dots and the datum (alignment slots or dowel holes) |
 | `stencil-F_Cu.gbr` | the copper of every board, for checking the alignment (`--no-copper` leaves it out) |
 | `stencil-Edge_Cuts.gbr` | the sheet rectangle as a 0.1 mm outline, only with `--outline` |
 | `stencil.zip` | the gerbers above; this is what we upload |
 | `stencil-preview.png` | the preview |
-| `stencil-report.txt` | sheet and block size, the winning heuristic, whether every dowel hole is on the grid and what the grid cost in cell area, every cell with its board rectangle and dowel hole coordinates (on the sheet and relative to the board corner), pad counts, dot count, file list |
+| `stencil-report.txt` | sheet and block size, the winning heuristic, a `Datum:` block naming the mode and its numbers, a `Grid:` block saying whether every jig pin is on the grid (and, for `holes`, what the grid cost in cell area), then every cell with its board rectangle, its datum corner, its slot or dowel hole coordinates and its jig pin centres (on the sheet and relative to the board corner) plus the direction to push it, pad counts, dot count, file list |
 
 The gerbers are RS-274X with X2 attributes in the format KiCad writes
 (`FSLAX46Y46`, `MOMM`). The preview shows the whole sheet on a dark background
 with millimetre rulers along the left and bottom edges, a faint dashed guide
 under every dotted line, a label in every cell and a legend underneath:
 
+![Preview of the example sheet](docs/figures/example-preview.png)
+
+The picture above is the preview of the eight example boards this tool was
+developed with, on the default 380 x 280 sheet with the slots datum: twelve
+cells, their double dotted borders, three alignment slots per cell with the
+jig pins drawn as dashed outlines, and the datum corner of each cell marked.
+
 | colour | meaning |
 | --- | --- |
-| red | everything that becomes an opening: paste, opened pads, dots, holes |
+| red | everything that becomes an opening: paste, opened pads, dots, alignment slots, dowel holes |
+| blue dashed outline | a jig pin where it comes up through the foil (through a slot, or through a dowel hole) |
+| orange bracket | the datum corner of a cell, with a small green arrow pointing at it: the direction the piece is pushed (slots datum) |
 | yellow | undefined candidates (no opening); a component with undefined pads gets a labelled yellow box |
 | blue | ignored candidates and closed paste openings |
 | grey | copper, and pads that already have paste |
@@ -254,9 +300,15 @@ under every dotted line, a label in every cell and a legend underneath:
 - `inputs...` - zip files or gerber directories instead of scanning the folder.
 - `--name NAME`, `--out DIR` - name and place of the generated files;
   `--config FILE` - the configuration file (default `./.stencicrity`).
-- `--size WxH`, `--portrait`, `--gap MM`, `--no-holes`, `--hole-grid MM`,
+- `--size WxH`, `--portrait`, `--gap MM`, `--hole-grid MM`,
   `--dot-line-gap MM`, `--sort name` and the other layout numbers; all of them
   are saved into the `.stencicrity` file.
+- `--datum slots|holes|none` - which alignment features every cell gets, with
+  `--slot-width MM`, `--slot-length MM`, `--slot-offset MM`, `--slot-corner MM`,
+  `--slot-web MM` and `--pin-dia MM` for the slots and `--hole-dia MM` /
+  `--hole-inset MM` for the holes. `--holes` and `--no-holes` are the legacy
+  spellings of `--datum holes` and `--datum none`; an old `.stencicrity` with a
+  `holes = on` / `off` line is read the same way.
 - `--only PROJECT[:top|bottom]`, `--exclude PROJECT[:top|bottom]` - switch
   sides on or off; repeatable, case insensitive, a substring is enough
   (`--exclude photo` drops `GERBER-PhotoAmp`); saved as well.

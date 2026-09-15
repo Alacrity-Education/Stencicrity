@@ -123,9 +123,15 @@ orientation = landscape   # landscape (long side horizontal) | portrait
 
 [layout]
 spacing = 30.0            # mm between neighbouring boards
-holes = on
+datum = slots             # slots | holes | none
 hole_dia = 5.0
 hole_inset = 2.0
+slot_width = 4.5
+slot_length = 12.0
+slot_offset = 2.25
+slot_corner = 8.0
+slot_web = 3.0
+pin_dia = 3.0
 dot_dia = 0.5
 dot_pitch = 3.0
 dot_line_gap = 2.5
@@ -153,18 +159,46 @@ RBARF/bottom/TP1.1@148.082,-99.568 = ignore   # SMDPad C ⌀1.00
 | `[stencil]` | `size` | one of `STENCIL_SIZES` as `WxH`, either order | `Config.size` |
 | | `orientation` | `landscape` \| `portrait` | `Config.orientation` |
 | `[layout]` | `spacing` (alias `gap`) | float >= 0 | `LayoutParams.gap` |
-| | `holes` | bool | `holes` |
+| | `datum` | `slots` \| `holes` \| `none` | `datum` |
+| | `holes` | bool, **legacy only** | mapped onto `datum`, see below |
 | | `hole_dia` | float > 0 | `hole_dia` |
 | | `hole_inset` | any float, negative allowed | `hole_inset` |
+| | `slot_width` | float > 0 | `slot_width` |
+| | `slot_length` | float > 0 | `slot_length` |
+| | `slot_offset` | float >= 0 | `slot_offset` |
+| | `slot_corner` | float > 0 | `slot_corner` |
+| | `slot_web` | float > 0 | `slot_web` |
+| | `pin_dia` | float > 0 | `pin_dia` |
 | | `dot_dia` | float > 0 | `dot_dia` |
 | | `dot_pitch` | float > 0 | `dot_pitch` |
 | | `dot_line_gap` | float >= 0 | `dot_line_gap` |
-| | `hole_grid` | float >= 0 | `hole_grid` |
+| | `hole_grid` | float >= 0 | `hole_grid` (pin centres of either datum) |
 | | `outer_border` (alias `border`) | bool | `outer_border` |
 | | `sort` | `height` \| `name` | `sort` |
 | `[rules]` | `ignore_prefixes` | prefixes separated by commas or spaces | `Config.ignore_prefixes` |
 | `[sides]` | `<project>/<side>` | bool | `Config.sides[key]` |
 | `[pads]` | `<pad key>` | `undefined` \| `open` \| `ignore` | `Config.pads[key]` |
+
+### `datum` and the legacy `holes` switch
+
+Before the slots datum existed the `[layout]` section had a single boolean,
+`holes = on | off`. `datum` replaced it, and `format_config()` no longer writes
+a `holes` line at all, but `load_config()` still understands one so an existing
+`.stencicrity` keeps behaving the way it did:
+
+| in the file | result |
+| --- | --- |
+| `datum = slots \| holes \| none` | that mode; anything else warns and keeps the current value |
+| `holes = on` (no `datum`) | `datum = holes` |
+| `holes = off` (no `datum`) | `datum = none` |
+| both keys, in either order | `datum` wins, the `holes` line is ignored |
+| neither | the default, `datum = slots` |
+
+`_read_layout()` gets the set of `[layout]` keys the file has already produced,
+so the "`datum` wins" rule works whichever order the two lines come in: reading
+`datum` records it, and the `holes` branch only assigns when `datum` is not in
+that set. A `holes` value that is not a boolean warns and changes nothing. The
+mapping is one-way - once the file is written back, only `datum` is in it.
 
 ### Parsing rules
 

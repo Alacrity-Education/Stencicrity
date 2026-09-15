@@ -13,7 +13,7 @@ the TUI exits and is meant to be readable and editable by hand::
 
     [layout]
     spacing = 30.0
-    holes = on
+    datum = slots
     hole_grid = 8.0
     ...
 
@@ -42,6 +42,9 @@ from datetime import datetime
 from typing import Callable, Optional
 
 from .model import (
+    DATUM_HOLES,
+    DATUM_MODES,
+    DATUM_NONE,
     ORIENTATIONS,
     SORT_ORDERS,
     STATE_IGNORE,
@@ -86,13 +89,21 @@ _LAYOUT_FLOATS: dict[str, tuple[str, Optional[Callable[[float], bool]], str]] = 
     "spacing": ("gap", lambda v: v >= 0.0, "must not be negative"),
     "hole_dia": ("hole_dia", lambda v: v > 0.0, "must be positive"),
     "hole_inset": ("hole_inset", None, ""),
+    "slot_width": ("slot_width", lambda v: v > 0.0, "must be positive"),
+    "slot_length": ("slot_length", lambda v: v > 0.0, "must be positive"),
+    "slot_offset": ("slot_offset", lambda v: v >= 0.0, "must not be negative"),
+    "slot_corner": ("slot_corner", lambda v: v > 0.0, "must be positive"),
+    "slot_web": ("slot_web", lambda v: v > 0.0, "must be positive"),
+    "pin_dia": ("pin_dia", lambda v: v > 0.0, "must be positive"),
     "dot_dia": ("dot_dia", lambda v: v > 0.0, "must be positive"),
     "dot_pitch": ("dot_pitch", lambda v: v > 0.0, "must be positive"),
     "dot_line_gap": ("dot_line_gap", lambda v: v >= 0.0, "must not be negative"),
     "hole_grid": ("hole_grid", lambda v: v >= 0.0, "must not be negative"),
 }
 #: ``[layout]`` key -> LayoutParams attribute (booleans).
-_LAYOUT_BOOLS = {"holes": "holes", "outer_border": "outer_border"}
+_LAYOUT_BOOLS = {"outer_border": "outer_border"}
+#: The pre-``datum`` ``holes = on | off`` switch, mapped onto its successor.
+_LEGACY_HOLES_DATUM = {True: DATUM_HOLES, False: DATUM_NONE}
 #: Accepted spellings of a ``[layout]`` key.
 _LAYOUT_ALIASES = {"gap": "spacing", "border": "outer_border"}
 
@@ -152,6 +163,9 @@ def load_config(path: str, *, warn: Optional[Warn] = None) -> Config:
 
     # Lines before the first header belong to [pads] (old, flat format).
     section = SECTION_PADS
+    # Which [layout] keys the file actually carries: an explicit ``datum``
+    # beats the legacy ``holes`` switch whichever order they come in.
+    seen_layout: set[str] = set()
     for number, raw in enumerate(lines, 1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -176,7 +190,7 @@ def load_config(path: str, *, warn: Optional[Warn] = None) -> Config:
         if section == SECTION_STENCIL:
             _read_stencil(config, key.lower(), value, where, emit)
         elif section == SECTION_LAYOUT:
-            _read_layout(config, key.lower(), value, where, emit)
+            _read_layout(config, key.lower(), value, where, emit, seen_layout)
         elif section == SECTION_RULES:
             _read_rule(config, key.lower(), value, where, emit)
         elif section == SECTION_SIDES:
@@ -211,10 +225,30 @@ def _read_stencil(config: Config, key: str, value: str, where: str,
 
 
 def _read_layout(config: Config, key: str, value: str, where: str,
-                 emit: Warn) -> None:
+                 emit: Warn, seen: Optional[set[str]] = None) -> None:
     key = _LAYOUT_ALIASES.get(key, key)
     params = config.layout
-    if key in _LAYOUT_FLOATS:
+    if seen is None:
+        seen = set()
+    seen.add(key)
+    if key == "datum":
+        text = value.lower()
+        if text not in DATUM_MODES:
+            emit(f"{where}: unknown datum {value!r} "
+                 f"(use {' | '.join(DATUM_MODES)}), using {params.datum}")
+            return
+        params.datum = text
+    elif key == "holes":
+        # Older files only had this on/off switch; keep their behaviour
+        # unless the same file also names a datum (which wins either way).
+        flag = parse_bool(value)
+        if flag is None:
+            emit(f"{where}: holes = {value!r} is not on/off, "
+                 f"using datum {params.datum}")
+            return
+        if "datum" not in seen:
+            params.datum = _LEGACY_HOLES_DATUM[flag]
+    elif key in _LAYOUT_FLOATS:
         attr, ok, requirement = _LAYOUT_FLOATS[key]
         try:
             number = float(value)
@@ -378,17 +412,30 @@ def format_config(config: Config, projects: list[Project]) -> str:
         f"[{SECTION_LAYOUT}]",
         _entry("spacing", _num_text(params.gap),
                "mm between neighbouring boards; the dotted border runs in the middle"),
-        _entry("holes", _bool_text(params.holes),
-               "cut dowel pin holes near every cell corner"),
-        _entry("hole_dia", _num_text(params.hole_dia), "mm"),
+        _entry("datum", params.datum,
+               " | ".join(DATUM_MODES)
+               + " - alignment features cut into every cell"),
+        _entry("hole_dia", _num_text(params.hole_dia), "mm (holes datum)"),
         _entry("hole_inset", _num_text(params.hole_inset),
                "mm from the dotted line to the hole edge (negative = onto the line)"),
+        _entry("slot_width", _num_text(params.slot_width),
+               "mm across the cell edge (slots datum)"),
+        _entry("slot_length", _num_text(params.slot_length),
+               "mm along the cell edge (slots datum)"),
+        _entry("slot_offset", _num_text(params.slot_offset),
+               "mm from the cell edge to the slot's outer wall"),
+        _entry("slot_corner", _num_text(params.slot_corner),
+               "mm from the cell corner to the two bottom slot centres"),
+        _entry("slot_web", _num_text(params.slot_web),
+               "mm of foil kept between a slot and the board; cells grow to hold it"),
+        _entry("pin_dia", _num_text(params.pin_dia),
+               "mm jig pin through a slot (the holes datum uses hole_dia)"),
         _entry("dot_dia", _num_text(params.dot_dia), "mm"),
         _entry("dot_pitch", _num_text(params.dot_pitch), "mm"),
         _entry("dot_line_gap", _num_text(params.dot_line_gap),
                "mm between the two dotted border lines (0 = single line)"),
         _entry("hole_grid", _num_text(params.hole_grid),
-               "dowel hole centres snap to this grid, cells grow to fit (0 = off)"),
+               "pin centres (holes or slots) snap to this grid, 0 = off"),
         _entry("outer_border", _bool_text(params.outer_border),
                "also dot the cell edges on the outer boundary of the block"),
         _entry("sort", params.sort, "height (tallest boards first) | name"),

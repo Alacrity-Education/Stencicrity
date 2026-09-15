@@ -27,6 +27,9 @@ from . import __version__
 from .config import CONFIG_FILENAME, LEGACY_CONFIG_SUFFIX
 from .gerber import GerberError, polygons_of
 from .model import (
+    DATUM_HOLES,
+    DATUM_MODES,
+    DATUM_NONE,
     ORIENTATION_LANDSCAPE,
     ORIENTATION_PORTRAIT,
     SIDE_BOTTOM,
@@ -94,17 +97,40 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--gap", type=float, default=None, metavar="MM",
                        help="spacing between neighbouring boards; the dotted "
                             "border runs in the middle of it (default 30)")
-    holes = group.add_mutually_exclusive_group()
-    holes.add_argument("--holes", dest="holes", action="store_const",
-                       const=True, default=None,
-                       help="cut dowel pin holes near every cell corner (default)")
-    holes.add_argument("--no-holes", dest="holes", action="store_const",
-                       const=False, help="do not cut dowel pin holes")
+    datum = group.add_mutually_exclusive_group()
+    datum.add_argument("--datum", choices=list(DATUM_MODES), default=None,
+                       help="alignment features cut into every cell: 'slots' "
+                            "puts three obround slots inside the cell for the "
+                            "three pin jig, 'holes' the four corner dowel "
+                            "holes, 'none' nothing (default slots)")
+    # The pre-``datum`` spelling of --datum holes / --datum none.
+    datum.add_argument("--holes", dest="datum", action="store_const",
+                       const=DATUM_HOLES,
+                       help="legacy alias for --datum holes")
+    datum.add_argument("--no-holes", dest="datum", action="store_const",
+                       const=DATUM_NONE,
+                       help="legacy alias for --datum none")
     group.add_argument("--hole-dia", type=float, default=None, metavar="MM",
-                       help="dowel pin hole diameter (default 5)")
+                       help="dowel pin hole diameter, holes datum (default 5)")
     group.add_argument("--hole-inset", type=float, default=None, metavar="MM",
                        help="dotted line to hole edge; negative puts the hole "
-                            "onto the line (default 2)")
+                            "onto the line, holes datum (default 2)")
+    group.add_argument("--slot-width", type=float, default=None, metavar="MM",
+                       help="slot size across the cell edge (default 4.5)")
+    group.add_argument("--slot-length", type=float, default=None, metavar="MM",
+                       help="slot size along the cell edge (default 12)")
+    group.add_argument("--slot-offset", type=float, default=None, metavar="MM",
+                       help="cell edge to the slot's outer wall; keeps the slot "
+                            "clear of the scissor zone (default 2.25)")
+    group.add_argument("--slot-corner", type=float, default=None, metavar="MM",
+                       help="cell corner to the centre of the two bottom slots, "
+                            "along the edge (default 8)")
+    group.add_argument("--slot-web", type=float, default=None, metavar="MM",
+                       help="foil kept between a slot and the board; cells grow "
+                            "until it fits (default 3)")
+    group.add_argument("--pin-dia", type=float, default=None, metavar="MM",
+                       help="jig pin diameter for the slots datum; the pin "
+                            "touches the slot wall nearest the board (default 3)")
     group.add_argument("--dot-dia", type=float, default=None, metavar="MM",
                        help="divider dot diameter (default 0.5)")
     group.add_argument("--dot-pitch", type=float, default=None, metavar="MM",
@@ -114,9 +140,9 @@ def build_parser() -> argparse.ArgumentParser:
                             "edge; 0 draws a single line on the edge "
                             "(default 2.5)")
     group.add_argument("--hole-grid", type=float, default=None, metavar="MM",
-                       help="put every dowel hole on one common grid of this "
-                            "pitch; cells grow until they fit it, 0 switches it "
-                            "off (default 8)")
+                       help="put every pin centre (holes or slots) on one "
+                            "common grid of this pitch, 0 switches it off "
+                            "(default 8)")
     border = group.add_mutually_exclusive_group()
     border.add_argument("--outer-border", dest="outer_border",
                         action="store_const", const=True, default=None,
@@ -178,6 +204,13 @@ def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
     for option, value, ok, requirement in (
             ("--gap", args.gap, lambda v: v >= 0, "must not be negative"),
             ("--hole-dia", args.hole_dia, lambda v: v > 0, "must be positive"),
+            ("--slot-width", args.slot_width, lambda v: v > 0, "must be positive"),
+            ("--slot-length", args.slot_length, lambda v: v > 0, "must be positive"),
+            ("--slot-offset", args.slot_offset, lambda v: v >= 0,
+             "must not be negative"),
+            ("--slot-corner", args.slot_corner, lambda v: v > 0, "must be positive"),
+            ("--slot-web", args.slot_web, lambda v: v > 0, "must be positive"),
+            ("--pin-dia", args.pin_dia, lambda v: v > 0, "must be positive"),
             ("--dot-dia", args.dot_dia, lambda v: v > 0, "must be positive"),
             ("--dot-pitch", args.dot_pitch, lambda v: v > 0, "must be positive"),
             ("--dot-line-gap", args.dot_line_gap, lambda v: v >= 0,
@@ -208,9 +241,15 @@ def apply_cli_config(config: Config, args: argparse.Namespace) -> None:
         config.orientation = args.orientation
     params = config.layout
     for attr, value in (("gap", args.gap),
-                        ("holes", args.holes),
+                        ("datum", args.datum),
                         ("hole_dia", args.hole_dia),
                         ("hole_inset", args.hole_inset),
+                        ("slot_width", args.slot_width),
+                        ("slot_length", args.slot_length),
+                        ("slot_offset", args.slot_offset),
+                        ("slot_corner", args.slot_corner),
+                        ("slot_web", args.slot_web),
+                        ("pin_dia", args.pin_dia),
                         ("dot_dia", args.dot_dia),
                         ("dot_pitch", args.dot_pitch),
                         ("dot_line_gap", args.dot_line_gap),
@@ -285,9 +324,12 @@ def _pad_counts(side: Side) -> dict[str, int]:
 
 
 def _write_paste(layout: Layout, path: str, name: str, open_shrink: float) -> str:
-    """Write the paste layer: source openings, decided pads, dots and holes.
+    """Write the paste layer: source openings, decided pads, dots and the datum.
 
     Openings of pads the user closed are left out (``side.active_paste_objects``).
+    The alignment features come last: three obround slots per cell for the
+    ``slots`` datum, four round holes per cell for ``holes``, nothing for
+    ``none``.
     """
     from shapely.affinity import affine_transform
 
@@ -314,6 +356,11 @@ def _write_paste(layout: Layout, path: str, name: str, open_shrink: float) -> st
         writer.comment("--- border dots ---")
         for x, y in layout.dots:
             writer.add_circle(x, y, layout.params.dot_dia)
+    if any(area.slots for area in layout.areas):
+        writer.comment("--- alignment slots ---")
+        for area in layout.areas:
+            for cx, cy, w, h in area.slots:
+                writer.add_obround(cx, cy, w, h)
     if any(area.holes for area in layout.areas):
         writer.comment("--- dowel pin holes ---")
         for area in layout.areas:
@@ -363,7 +410,8 @@ def _summary(layout: Layout, config: Config, dropped: Sequence[Side],
              config_path: str, undefined: int) -> list[str]:
     """Human readable summary shown on stdout and stored in the report."""
     lines = [f"stencil: {layout.width:.1f} x {layout.height:.1f} mm "
-             f"({config.size_label}, {config.orientation})",
+             f"({config.size_label}, {config.orientation}), "
+             f"datum: {config.layout.datum}",
              f"block:   {layout.block_width:.1f} x {layout.block_height:.1f} mm, "
              f"{len(layout.areas)} area(s) — {_fit_text(layout)}"]
     for area in layout.areas:
@@ -375,7 +423,7 @@ def _summary(layout: Layout, config: Config, dropped: Sequence[Side],
             f"paste={len(area.side.active_paste_objects):<5} "
             f"closed={len(area.side.closed_pads):<4} "
             f"open={counts[STATE_OPEN]:<4} ignore={counts[STATE_IGNORE]:<4} "
-            f"undefined={counts[STATE_UNDEFINED]}")
+            f"undefined={counts[STATE_UNDEFINED]:<4} pins={len(area.pins)}")
     for side in dropped:
         lines.append(f"  dropped (no openings): {side.label}")
     for side in disabled:
@@ -470,7 +518,8 @@ def _run(args: argparse.Namespace) -> int:
     preview_path = os.path.join(out_dir, f"{name}-preview.png")
     layout = pack(sides, config)
     print(f"stencil: {layout.width:.1f} x {layout.height:.1f} mm "
-          f"({config.size_label}, {config.orientation})")
+          f"({config.size_label}, {config.orientation}), "
+          f"datum: {config.layout.datum}")
     print(f"block:   {layout.block_width:.1f} x {layout.block_height:.1f} mm "
           f"— {_fit_text(layout)}")
 
