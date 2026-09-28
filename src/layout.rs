@@ -695,9 +695,7 @@ pub fn pack(projects: &[Project], sides: &[SideId], config: &Config) -> Layout {
 
     let dividers = dividers_of(&areas, params.outer_border, params.dot_line_gap);
     let cover = Cover::new(&areas, params);
-    // `Layout` has nowhere to keep the number of dots the clearance rule
-    // removed, so the report recomputes it with `dropped_dots`.
-    let (dots, _dropped) = dots_of(&dividers, params, &cover);
+    let (dots, dots_dropped) = dots_of(&dividers, params, &cover);
     Layout {
         params: params.clone(),
         areas,
@@ -709,6 +707,7 @@ pub fn pack(projects: &[Project], sides: &[SideId], config: &Config) -> Layout {
         dividers,
         heuristic,
         overflow,
+        dots_dropped,
     }
 }
 
@@ -886,7 +885,8 @@ fn dots_of(
 
 /// How many divider dots the layout dropped for the datum clearance.
 ///
-/// Recomputed from the layout (the count is not stored in `Layout`).
+/// Recomputed from the layout; `pack` stores the same number in
+/// [`Layout::dots_dropped`], which is what the report uses.
 pub fn dropped_dots(layout: &Layout) -> usize {
     let cover = Cover::new(&layout.areas, &layout.params);
     dots_of(&layout.dividers, &layout.params, &cover).1
@@ -1543,7 +1543,7 @@ pub fn layout_report(projects: &[Project], layout: &Layout, config: &Config) -> 
         } else {
             ""
         },
-        dropped_dots(layout),
+        layout.dots_dropped,
         fmt_g(params.dot_clearance)
     ));
     lines.join("\n")

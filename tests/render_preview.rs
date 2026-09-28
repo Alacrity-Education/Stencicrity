@@ -106,6 +106,7 @@ fn demo() -> (Vec<Project>, Layout) {
         dividers: vec![(10.0, 10.0, 60.0, 10.0)],
         heuristic: "bottom-left".to_string(),
         overflow: 0,
+        dots_dropped: 0,
     };
     (projects, layout)
 }

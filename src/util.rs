@@ -39,7 +39,11 @@ fn flush(cur: &str, digits: bool) -> Chunk {
 pub fn fmt_mm(v: f64) -> String {
     let s = format!("{v:.3}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s.is_empty() || s == "-0" { "0".to_string() } else { s.to_string() }
+    if s.is_empty() || s == "-0" {
+        "0".to_string()
+    } else {
+        s.to_string()
+    }
 }
 
 #[cfg(test)]

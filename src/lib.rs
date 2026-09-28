@@ -8,6 +8,7 @@
 //! sheet, `render` draws the preview PNG, `tui` is the terminal UI, and
 //! `model` holds the shared data types.
 
+pub mod ascii;
 pub mod cli;
 pub mod config;
 pub mod gerber;

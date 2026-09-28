@@ -97,6 +97,7 @@ fn layout_for(config: &Config) -> Layout {
         dividers: Vec::new(),
         heuristic: "test".to_string(),
         overflow: 0,
+        dots_dropped: 0,
     }
 }
 
@@ -146,7 +147,7 @@ fn the_public_api_drives_a_whole_session() {
     app.handle_key(ch('p'));
     assert_eq!(app.status(), "rendering…");
     assert!(app.run_preview());
-    assert_eq!(app.status(), "preview updated: /tmp/demo.png");
+    assert_eq!(app.status(), "preview opened: /tmp/demo.png");
 
     // render on a test backend and read the buffer back
     let mut terminal = Terminal::new(TestBackend::new(100, 16)).unwrap();
@@ -174,14 +175,14 @@ fn the_public_api_drives_a_whole_session() {
     assert_eq!(app.handle_key(ch('q')), Action::Quit);
 
     drop(app);
-    assert_eq!(previews, vec![false]);
+    assert_eq!(previews, vec![true]);
     assert_eq!(model[0].sides[0].pads[1].state, STATE_OPEN);
 }
 
 #[test]
 fn pure_helpers_are_reusable() {
     let items = page_items(PAGE_PADS, false);
-    assert_eq!(wrap_items(&items, 140, FOOTER_LINES).len(), 1);
+    assert_eq!(wrap_items(&items, 150, FOOTER_LINES).len(), 1);
     assert_eq!(wrap_items(&items, 80, FOOTER_LINES).len(), 2);
 
     let model = projects();

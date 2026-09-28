@@ -27,6 +27,14 @@
 //! the filter; Esc leaves the search and clears the filter at once. Either way
 //! the cursor stays on the row it was on.
 //!
+//! `p` renders the preview PNG and opens it in the image viewer. `v` toggles
+//! the *split view*: a vertical line divides the terminal, the four pages keep
+//! the left half and the right half shows a terminal rendering of the sheet
+//! around the pad the Pads page cursor is on (see [`crate::ascii`]). The split
+//! wants a 150 column terminal - 90 for the app, one for the line, the rest
+//! for the picture; below that the right half only asks for a wider terminal
+//! ([`SPLIT_PROMPT`]) and the app keeps at least [`SPLIT_LEFT_MIN`] columns.
+//!
 //! `w` generates on every page - twice when the layout does not fit - and `q`
 //! quits. Esc never leaves the program: it cancels an inline edit, then a
 //! pending generate confirmation, then an active filter, and does nothing when
@@ -45,9 +53,11 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::Frame;
 
+use crate::ascii::{self, Class, GeomCache, Raster};
 use crate::model::{
     Config, Layout, LayoutParams, Pad, Project, Side, SideId, DATUM_HOLES, DATUM_MODES,
     DATUM_SLOTS, ORIENTATIONS, ORIENTATION_PORTRAIT, SORT_ORDERS, STATES, STATE_IGNORE, STATE_OPEN,
@@ -100,7 +110,8 @@ pub const PAGE_ITEMS: [&[&str]; 4] = [
         "a component",
         "n/N undef",
         "* all pads",
-        "p/v preview",
+        "p preview",
+        "v split view",
         "w generate",
         "1-4/tab page",
         "q quit",
@@ -112,7 +123,8 @@ pub const PAGE_ITEMS: [&[&str]; 4] = [
         "A all",
         "N none",
         "w generate",
-        "p/v preview",
+        "p preview",
+        "v split view",
         "1-4/tab page",
         "q quit",
     ],
@@ -121,7 +133,8 @@ pub const PAGE_ITEMS: [&[&str]; 4] = [
         "space/enter pick size",
         "o orientation",
         "w generate",
-        "p/v preview",
+        "p preview",
+        "v split view",
         "1-4/tab page",
         "q quit",
     ],
@@ -131,7 +144,8 @@ pub const PAGE_ITEMS: [&[&str]; 4] = [
         "space toggle",
         "e/enter edit",
         "w generate",
-        "p/v preview",
+        "p preview",
+        "v split view",
         "1-4/tab page",
         "q quit",
     ],
@@ -154,6 +168,86 @@ pub const FOOTER_LINES: usize = 2;
 
 pub const NOFIT_WARNING: &str =
     "layout does not fit the stencil — press w again to generate anyway";
+
+// --------------------------------------------------------------------------- //
+// Pure helpers: the split view
+// --------------------------------------------------------------------------- //
+
+/// The vertical line between the app and the terminal preview.
+pub const SEPARATOR: &str = "│";
+/// The whole right half below [`SPLIT_MIN_WIDTH`] columns.
+pub const SPLIT_PROMPT: &str = "Terminal preview requires a larger terminal, please resize.";
+/// The right half with no pad to draw.
+pub const NO_PAD: &str = "no pad selected";
+/// The one line legend under the picture.
+pub const LEGEND: [(&str, Class); 4] = [
+    ("red opening", Class::Opening),
+    ("yellow undefined", Class::Undefined),
+    ("blue ignored", Class::Ignored),
+    ("cyan selected", Class::Selected),
+];
+/// From here up the right half shows the picture; below it only [`SPLIT_PROMPT`].
+pub const SPLIT_MIN_WIDTH: u16 = 150;
+/// Columns the app keeps at [`SPLIT_MIN_WIDTH`] and above.
+pub const SPLIT_LEFT_WIDTH: u16 = 90;
+/// The app never gets fewer columns than this; below that the prompt takes over.
+pub const SPLIT_LEFT_MIN: u16 = 60;
+/// The picture needs a caption; the legend wants this much height on top.
+pub const LEGEND_MIN_HEIGHT: u16 = 5;
+
+/// How the split view divides one terminal row.
+///
+/// `left` is the app (0 when even [`SPLIT_LEFT_MIN`] columns are impossible:
+/// the prompt then takes the whole width), the separator sits at `left` and
+/// the right half runs from `right_x` for `right_w` columns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SplitPlan {
+    pub left: u16,
+    pub right_x: u16,
+    pub right_w: u16,
+    /// draw the picture (else only the resize prompt)
+    pub preview: bool,
+}
+
+/// Divide a terminal `width` columns wide between the app and the preview.
+///
+/// At [`SPLIT_MIN_WIDTH`] and above the app gets [`SPLIT_LEFT_WIDTH`] columns,
+/// one goes to the separator and the rest to the picture. Below that the right
+/// half only carries [`SPLIT_PROMPT`], so it is given exactly that many columns
+/// and the app keeps what is left; when that would leave the app fewer than
+/// [`SPLIT_LEFT_MIN`] columns the prompt takes the whole width instead.
+pub fn split_plan(width: u16) -> SplitPlan {
+    if width >= SPLIT_MIN_WIDTH {
+        return SplitPlan {
+            left: SPLIT_LEFT_WIDTH,
+            right_x: SPLIT_LEFT_WIDTH + 1,
+            right_w: width - SPLIT_LEFT_WIDTH - 1,
+            preview: true,
+        };
+    }
+    let want = SPLIT_PROMPT.chars().count() as u16;
+    if width >= SPLIT_LEFT_MIN + 1 + want {
+        let left = width - 1 - want;
+        return SplitPlan {
+            left,
+            right_x: left + 1,
+            right_w: want,
+            preview: false,
+        };
+    }
+    SplitPlan {
+        left: 0,
+        right_x: 0,
+        right_w: width,
+        preview: false,
+    }
+}
+
+/// Character rows the picture gets in a right half `height` rows tall: one
+/// goes to the caption and, when there is room, one to the legend.
+pub fn panel_rows(height: u16) -> u16 {
+    height.saturating_sub(1 + u16::from(height >= LEGEND_MIN_HEIGHT))
+}
 
 // --------------------------------------------------------------------------- //
 // Pure helpers: pad states
@@ -1388,6 +1482,86 @@ fn with_cursor(style: Style, cursor: bool) -> Style {
     }
 }
 
+/// One line of text, centred in the column band `x0 .. x0 + width`.
+fn draw_centered(buf: &mut Buffer, x0: u16, width: u16, height: u16, text: &str) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    let text = ellipsis(text, usize::from(width));
+    let used = text.chars().count() as u16;
+    let x = x0 + width.saturating_sub(used) / 2;
+    put(
+        buf,
+        x,
+        height / 2,
+        &text,
+        Style::new().add_modifier(Modifier::DIM),
+    );
+}
+
+/// The colour legend under the picture, every colour word in its own colour.
+fn draw_legend(buf: &mut Buffer, x0: u16, width: u16, y: u16) {
+    let right = x0.saturating_add(width);
+    let mut x = x0;
+    for (index, (text, class)) in LEGEND.iter().enumerate() {
+        if index > 0 {
+            x = put(buf, x, y, ITEM_SEP, Style::new());
+        }
+        let (colour, rest) = text.split_once(' ').unwrap_or((text, ""));
+        if x >= right {
+            return;
+        }
+        x = put(
+            buf,
+            x,
+            y,
+            &ellipsis(colour, usize::from(right - x)),
+            Style::new().fg(ascii::class_color(*class)),
+        );
+        if x >= right {
+            return;
+        }
+        x = put(
+            buf,
+            x,
+            y,
+            &ellipsis(&format!(" {rest}"), usize::from(right - x)),
+            Style::new().add_modifier(Modifier::DIM),
+        );
+    }
+}
+
+/// The right half: the caption, the half-block picture and the legend.
+fn draw_panel(buf: &mut Buffer, x0: u16, width: u16, height: u16, raster: &Raster) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    put(
+        buf,
+        x0,
+        0,
+        &ellipsis(&raster.caption, usize::from(width)),
+        style_kind(Kind::Header),
+    );
+    for row in 0..raster.rows() {
+        let y = 1 + row as u16;
+        if y >= height {
+            break;
+        }
+        for col in 0..raster.cols {
+            let x = x0 + col as u16;
+            let (symbol, fg, bg) = raster.cell(col, row);
+            if symbol == " " && fg == Color::Reset && bg == Color::Reset {
+                continue; // leave the terminal background alone
+            }
+            put(buf, x, y, symbol, Style::new().fg(fg).bg(bg));
+        }
+    }
+    if height >= LEGEND_MIN_HEIGHT {
+        draw_legend(buf, x0, width, height - 1);
+    }
+}
+
 fn ljust(text: &str, width: usize) -> String {
     let n = text.chars().count();
     let mut out = text.to_string();
@@ -1455,10 +1629,21 @@ pub struct App<'p, 'h> {
     counts_sides: Option<Vec<usize>>,
     /// row focused when the search started
     anchor: Option<Row>,
-    /// `p`/`v` asked for a preview; run it after the "rendering…" frame
-    preview_request: Option<(bool, Option<PadId>)>,
+    /// `p` asked for a preview; run it after the "rendering…" frame
+    preview_request: Option<Option<PadId>>,
     view_h: u16,
+    /// `v`: the terminal preview takes the right half of the screen
+    split: bool,
+    /// bumped by every change the right half has to follow
+    generation: u64,
+    /// `object_geometry` per side, built lazily and kept (the expensive part)
+    geom_cache: GeomCache,
+    /// the last picture, keyed by (pad, panel size, generation)
+    panel_cache: Option<(PanelKey, Option<Raster>)>,
 }
+
+/// What a cached right-half picture was drawn for.
+type PanelKey = (Option<PadId>, u16, u16, u64);
 
 impl<'p, 'h> App<'p, 'h> {
     /// Build the app. `pads` are *all* pads of `sides`, already sorted.
@@ -1504,6 +1689,10 @@ impl<'p, 'h> App<'p, 'h> {
             anchor: None,
             preview_request: None,
             view_h: 24,
+            split: false,
+            generation: 0,
+            geom_cache: GeomCache::new(),
+            panel_cache: None,
         };
         app.sync_visible(None);
         app
@@ -1521,6 +1710,16 @@ impl<'p, 'h> App<'p, 'h> {
 
     pub fn show_all(&self) -> bool {
         self.show_all
+    }
+
+    /// Is the split view on (`v`)?
+    pub fn split(&self) -> bool {
+        self.split
+    }
+
+    /// Counts every change the right half has to follow.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn editing(&self) -> Option<&str> {
@@ -1742,6 +1941,7 @@ impl<'p, 'h> App<'p, 'h> {
     fn invalidate(&mut self) {
         self.refresh_layout();
         self.presets = None;
+        self.touch();
     }
 
     /// Compute the first layout (and the fit table when the Stencil page opens
@@ -1761,20 +1961,16 @@ impl<'p, 'h> App<'p, 'h> {
         }
     }
 
-    /// Run a preview the last key asked for (after the "rendering…" frame).
-    /// Returns true when one ran, so the caller redraws.
+    /// Run the preview `p` asked for (after the "rendering…" frame): it renders
+    /// the PNG *and* opens it in the image viewer. Returns true when one ran,
+    /// so the caller redraws.
     pub fn run_preview(&mut self) -> bool {
-        let Some((do_open, pad)) = self.preview_request.take() else {
+        let Some(pad) = self.preview_request.take() else {
             return false;
         };
         let preview = &mut *self.hooks.on_preview;
-        let path = preview(self.projects, self.config, pad, do_open);
-        let verb = if do_open {
-            "preview opened"
-        } else {
-            "preview updated"
-        };
-        self.status = format!("{verb}: {path}");
+        let path = preview(self.projects, self.config, pad, true);
+        self.status = format!("preview opened: {path}");
         true
     }
 
@@ -1810,11 +2006,64 @@ impl<'p, 'h> App<'p, 'h> {
 
     // -- drawing ----------------------------------------------------------- //
 
-    /// Render the whole screen.
+    /// Render the whole screen: the four pages, and the split view on top.
+    ///
+    /// The terminal size is read from the frame on every draw, so a resize
+    /// needs nothing but a repaint. In the split view the app is drawn into a
+    /// buffer of its own width and blitted over the left half, which keeps
+    /// every page's own drawing code unaware of the split.
     pub fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        self.view_h = area.height;
-        let (width, height) = (usize::from(area.width), usize::from(area.height));
+        let (width, height) = (area.width, area.height);
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.view_h = height;
+        if !self.split {
+            self.draw_app(frame.buffer_mut());
+            return;
+        }
+        let plan = split_plan(width);
+        // The app, into a buffer exactly as wide as its half.
+        let left = (plan.left > 0).then(|| {
+            let mut sub = Buffer::empty(Rect::new(0, 0, plan.left, height));
+            self.draw_app(&mut sub);
+            sub
+        });
+        // The picture, re-rasterised only when something it shows changed. A
+        // panel with no room for a single row of it counts as "too small".
+        let rows = panel_rows(height);
+        let drawable = plan.preview && rows > 0;
+        let fallback = self.panel_fallback();
+        let panel = if drawable {
+            self.panel(plan.right_w, rows)
+        } else {
+            None
+        };
+        let buf = frame.buffer_mut();
+        if let Some(sub) = &left {
+            for y in 0..height {
+                for x in 0..plan.left {
+                    buf[(x, y)] = sub[(x, y)].clone();
+                }
+            }
+            for y in 0..height {
+                put(buf, plan.left, y, SEPARATOR, Style::new());
+            }
+        }
+        if !drawable {
+            draw_centered(buf, plan.right_x, plan.right_w, height, SPLIT_PROMPT);
+            return;
+        }
+        match panel {
+            None => draw_centered(buf, plan.right_x, plan.right_w, height, &fallback),
+            Some(raster) => draw_panel(buf, plan.right_x, plan.right_w, height, raster),
+        }
+    }
+
+    /// Draw the four pages into `buf`; its area is the app's own half.
+    fn draw_app(&mut self, buf: &mut Buffer) {
+        let (width, height) = (usize::from(buf.area.width), usize::from(buf.area.height));
         if width == 0 || height == 0 {
             return;
         }
@@ -1843,7 +2092,6 @@ impl<'p, 'h> App<'p, 'h> {
 
         self.scroll(body_h);
 
-        let buf = frame.buffer_mut();
         if head_n >= 1 {
             self.draw_tabs(buf, width);
         }
@@ -1867,6 +2115,64 @@ impl<'p, 'h> App<'p, 'h> {
             let y = (height - help_n + row) as u16;
             self.draw_footer(buf, y, text, width, row == 0);
         }
+    }
+
+    // -- the split view ---------------------------------------------------- //
+
+    /// The pad the right half draws: the one the *Pads page* cursor is on,
+    /// whatever page is in front.
+    pub fn panel_pad(&self) -> Option<PadId> {
+        let rows = self.page_pads();
+        let index = self.cursor[PAGE_PADS].min(rows.len().checked_sub(1)?);
+        rows.get(index).copied()
+    }
+
+    /// What the right half says when there is no picture to draw.
+    fn panel_fallback(&self) -> String {
+        match self.panel_pad() {
+            None => NO_PAD.to_string(),
+            Some(id) => format!("{} is not placed on the sheet", self.pad(id).label()),
+        }
+    }
+
+    /// The picture of the selected pad, rasterised only when it has to be.
+    ///
+    /// The cache is keyed by the pad, the size of the right half and a counter
+    /// every mutation bumps, so moving the cursor, changing a pad state, a
+    /// side, the configuration or the terminal size all redraw it and nothing
+    /// else does.
+    fn panel(&mut self, cols: u16, rows: u16) -> Option<&Raster> {
+        let key: PanelKey = (self.panel_pad(), cols, rows, self.generation);
+        if self.panel_cache.as_ref().map(|(k, _)| *k) != Some(key) {
+            let mut raster = None;
+            if let (Some(id), Some(layout)) = (key.0, self.layout.as_ref()) {
+                raster = ascii::render_pad(
+                    self.projects,
+                    layout,
+                    id,
+                    &mut self.geom_cache,
+                    usize::from(cols),
+                    usize::from(rows),
+                );
+            }
+            self.panel_cache = Some((key, raster));
+        }
+        self.panel_cache.as_ref().and_then(|(_, r)| r.as_ref())
+    }
+
+    /// `v`: show or hide the terminal preview.
+    fn toggle_split(&mut self) {
+        self.split = !self.split;
+        self.status = if self.split {
+            "split view on — the pad under the cursor is drawn on the right".to_string()
+        } else {
+            "split view off".to_string()
+        };
+    }
+
+    /// Something the right half shows changed.
+    fn touch(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// The `/query_` prompt of the footer while searching.
@@ -2274,6 +2580,7 @@ impl<'p, 'h> App<'p, 'h> {
         };
         let (project, side) = (pad.project.clone(), pad.side.clone());
         self.status = format!("{label} ({project} {side}) -> {state}{note}");
+        self.touch();
     }
 
     fn apply_to_component(&mut self) {
@@ -2285,6 +2592,7 @@ impl<'p, 'h> App<'p, 'h> {
             (pad.ref_.clone(), pad.state.clone())
         };
         self.status = format!("{ref_}: {changed} pad(s) -> {state}");
+        self.touch();
     }
 
     /// `*`: list every pad of the enabled sides, or only the candidates.
@@ -2571,14 +2879,15 @@ impl<'p, 'h> App<'p, 'h> {
         }
     }
 
-    fn preview(&mut self, do_open: bool) {
+    /// `p`: render the preview PNG and open it in the image viewer.
+    fn preview(&mut self) {
         let pad = if self.page == PAGE_PADS {
             self.current_pad()
         } else {
             None
         };
         self.status = "rendering…".to_string();
-        self.preview_request = Some((do_open, pad));
+        self.preview_request = Some(pad);
     }
 
     /// `Generate` to generate, `Continue` when a second confirmation is needed.
@@ -2659,11 +2968,11 @@ impl<'p, 'h> App<'p, 'h> {
             }
             KeyCode::Char('q') => return Action::Quit,
             KeyCode::Char('p') => {
-                self.preview(false);
+                self.preview();
                 return Action::Continue;
             }
             KeyCode::Char('v') => {
-                self.preview(true);
+                self.toggle_split();
                 return Action::Continue;
             }
             // 'w' generates everywhere
@@ -3145,6 +3454,7 @@ mod tests {
             dividers: Vec::new(),
             heuristic: "test".to_string(),
             overflow: 0,
+            dots_dropped: 0,
         }
     }
 
@@ -3168,6 +3478,35 @@ mod tests {
                     )
                 };
             let mut compute_layout = |_: &[Project], cfg: &Config| -> Layout { fake_layout(cfg) };
+            let hooks = TuiHooks {
+                on_preview: &mut on_preview,
+                compute_layout: &mut compute_layout,
+            };
+            #[allow(unused_mut)]
+            let mut $app = App::new(&mut projects, &sides, order, &mut config, hooks, "stencil");
+            $app.refresh();
+        };
+    }
+
+    /// Like [`make_app`], but with the real packer behind `compute_layout` so
+    /// the split view has `Area`s (and therefore sheet coordinates) to work in.
+    macro_rules! make_packed_app {
+        ($app:ident) => {
+            let mut projects = fixture();
+            let sides = all_sides(&projects);
+            let order = pad_ids(&projects, &sides);
+            let mut config = Config::default();
+            config.size = (600, 600);
+            let mut on_preview = |_: &[Project], _: &Config, _: Option<PadId>, _: bool| -> String {
+                "/tmp/preview.png".to_string()
+            };
+            let mut compute_layout = |ps: &[Project], cfg: &Config| -> Layout {
+                let on: Vec<SideId> = all_sides(ps)
+                    .into_iter()
+                    .filter(|id| id.get(ps).enabled)
+                    .collect();
+                crate::layout::pack(ps, &on, cfg)
+            };
             let hooks = TuiHooks {
                 on_preview: &mut on_preview,
                 compute_layout: &mut compute_layout,
@@ -3209,6 +3548,41 @@ mod tests {
 
     fn modifier(buf: &Buffer, x: u16, y: u16) -> Modifier {
         buf[(x, y)].modifier
+    }
+
+    /// Columns `x0 .. x1` of row `y`, trailing blanks trimmed.
+    fn band(buf: &Buffer, y: u16, x0: u16, x1: u16) -> String {
+        (x0..x1.min(buf.area.width))
+            .map(|x| buf[(x, y)].symbol())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    /// `(symbol, fg, bg)` of one cell.
+    fn cell(buf: &Buffer, x: u16, y: u16) -> (String, Color, Color) {
+        let c = &buf[(x, y)];
+        (c.symbol().to_string(), c.fg, c.bg)
+    }
+
+    /// How many *picture* cells of the band carry `class` as foreground or
+    /// background (the caption and the legend rows are left out).
+    fn colour_count(buf: &Buffer, x0: u16, x1: u16, class: Class) -> usize {
+        let want = ascii::class_color(class);
+        let last = buf
+            .area
+            .height
+            .saturating_sub(u16::from(buf.area.height >= LEGEND_MIN_HEIGHT));
+        let mut n = 0;
+        for y in 1..last {
+            for x in x0..x1.min(buf.area.width) {
+                let c = &buf[(x, y)];
+                if c.symbol() != " " && (c.fg == want || c.bg == want) {
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 
     /// The pad label of every row of the (filtered) pads page.
@@ -3284,9 +3658,9 @@ mod tests {
     }
 
     #[test]
-    fn footer_help_wraps_onto_two_lines_at_80_and_one_at_140() {
+    fn footer_help_wraps_onto_two_lines_at_80_and_one_at_150() {
         let items = page_items(PAGE_PADS, false);
-        let wide = wrap_items(&items, 140, FOOTER_LINES);
+        let wide = wrap_items(&items, 150, FOOTER_LINES);
         assert_eq!(wide.len(), 1);
         assert_eq!(wide[0], items.join(ITEM_SEP));
 
@@ -3992,24 +4366,27 @@ mod tests {
     }
 
     #[test]
-    fn preview_shows_rendering_then_the_path() {
+    fn p_renders_and_opens_the_preview_while_v_does_not() {
         make_app!(app);
         send(&mut app, "jj"); // R2.1
         app.handle_key(ch('p'));
         assert_eq!(app.status(), "rendering…");
         assert!(app.run_preview());
-        assert_eq!(app.status(), "preview updated: /tmp/preview-quiet-2.png");
+        // `p` always opens the viewer now; there is no render-only key left
+        assert_eq!(app.status(), "preview opened: /tmp/preview-open-2.png");
         assert!(!app.run_preview());
 
+        // `v` is the split view and never calls the hook
         app.handle_key(ch('v'));
-        assert_eq!(app.status(), "rendering…");
-        app.run_preview();
-        assert_eq!(app.status(), "preview opened: /tmp/preview-open-2.png");
+        assert!(app.split());
+        assert!(!app.run_preview());
+        app.handle_key(ch('v'));
+        assert!(!app.split());
 
         // no pad is highlighted from another page
         send(&mut app, "3p");
         app.run_preview();
-        assert_eq!(app.status(), "preview updated: /tmp/preview-quiet-none.png");
+        assert_eq!(app.status(), "preview opened: /tmp/preview-open-none.png");
     }
 
     // ---------------------------------------------------------------- //
@@ -4132,7 +4509,7 @@ mod tests {
     #[test]
     fn the_pads_page_renders_header_rows_fit_line_and_footer() {
         make_app!(app);
-        let buf = render(&mut app, 140, 20);
+        let buf = render(&mut app, 150, 20);
         assert!(line(&buf, 0).starts_with("stencil    1 Pads"));
         assert_eq!(
             line(&buf, 1),
@@ -4156,8 +4533,8 @@ mod tests {
 
         // the cursor row is reverse video all the way to the right edge
         assert!(modifier(&buf, 0, 3).contains(Modifier::REVERSED));
-        assert!(modifier(&buf, 139, 3).contains(Modifier::REVERSED));
-        assert!(!modifier(&buf, 139, 4).contains(Modifier::REVERSED));
+        assert!(modifier(&buf, 149, 3).contains(Modifier::REVERSED));
+        assert!(!modifier(&buf, 149, 4).contains(Modifier::REVERSED));
 
         // the fit line sits above the footer
         let counts = StateCounts {
@@ -4167,9 +4544,9 @@ mod tests {
             closed: 1,
         };
         let expected = fit_line(app.config, app.layout(), counts);
-        assert_eq!(line(&buf, 18), clip(&expected, 140).trim_end());
+        assert_eq!(line(&buf, 18), clip(&expected, 150).trim_end());
 
-        let help = wrap_items(&page_items(PAGE_PADS, false), 140, FOOTER_LINES);
+        let help = wrap_items(&page_items(PAGE_PADS, false), 150, FOOTER_LINES);
         assert_eq!(help.len(), 1);
         assert_eq!(line(&buf, 19), help[0]);
         assert!(modifier(&buf, 0, 19).contains(Modifier::REVERSED));
@@ -4274,10 +4651,10 @@ mod tests {
     }
 
     #[test]
-    fn the_footer_wraps_at_80_and_fits_on_one_line_at_140() {
+    fn the_footer_wraps_at_80_and_fits_on_one_line_at_150() {
         make_app!(app);
-        let buf = render(&mut app, 140, 20);
-        let one = wrap_items(&page_items(PAGE_PADS, false), 140, FOOTER_LINES);
+        let buf = render(&mut app, 150, 20);
+        let one = wrap_items(&page_items(PAGE_PADS, false), 150, FOOTER_LINES);
         assert_eq!(one.len(), 1);
         assert_eq!(line(&buf, 19), one[0]);
         assert!(!line(&buf, 18).is_empty()); // the fit line, not more help
@@ -4375,6 +4752,191 @@ mod tests {
         send(&mut app, "g");
         let buf = render(&mut app, 120, 10);
         assert!(line(&buf, 2).contains("spacing"));
+    }
+
+    // ---------------------------------------------------------------- //
+    // the split view
+    // ---------------------------------------------------------------- //
+
+    #[test]
+    fn the_split_plan_follows_the_terminal_width() {
+        assert_eq!(
+            split_plan(150),
+            SplitPlan {
+                left: 90,
+                right_x: 91,
+                right_w: 59,
+                preview: true
+            }
+        );
+        assert_eq!(split_plan(400).left, 90);
+        assert_eq!(split_plan(400).right_w, 400 - 91);
+        // below 150 only the prompt, and the app keeps at least 60 columns
+        let narrow = split_plan(120);
+        assert!(!narrow.preview);
+        assert_eq!(narrow.left, SPLIT_LEFT_MIN);
+        assert_eq!(narrow.right_w, SPLIT_PROMPT.chars().count() as u16);
+        assert_eq!(split_plan(149).left, 149 - 1 - narrow.right_w);
+        // 119 cannot host both: the prompt takes the whole width
+        assert_eq!(
+            split_plan(119),
+            SplitPlan {
+                left: 0,
+                right_x: 0,
+                right_w: 119,
+                preview: false
+            }
+        );
+        // the caption takes one row, the legend one more when there is room
+        assert_eq!(panel_rows(40), 38);
+        assert_eq!(panel_rows(5), 3);
+        assert_eq!(panel_rows(4), 3);
+        assert_eq!(panel_rows(0), 0);
+    }
+
+    #[test]
+    fn v_splits_the_screen_and_draws_the_selected_pad() {
+        make_packed_app!(app);
+        assert!(!app.split());
+        send(&mut app, "v");
+        assert!(app.split());
+        assert_eq!(
+            app.status(),
+            "split view on — the pad under the cursor is drawn on the right"
+        );
+        app.status.clear();
+
+        let buf = render(&mut app, 150, 40);
+        // the separator runs the whole height, the app keeps 90 columns
+        for y in 0..40 {
+            assert_eq!(buf[(90, y)].symbol(), SEPARATOR, "row {y}");
+        }
+        assert!(band(&buf, 0, 0, 90).contains("1 Pads"));
+        let help = wrap_items(&page_items(PAGE_PADS, false), 90, FOOTER_LINES);
+        assert_eq!(band(&buf, 39, 0, 90), help[help.len() - 1]);
+
+        // the caption names the pad, the window and the zoom
+        let caption = band(&buf, 0, 91, 150);
+        assert!(
+            caption.starts_with("U1.1 · alpha top · window 4.00 x 5.15 mm · 1 col = 0.07 mm"),
+            "{caption:?}"
+        );
+        // the legend closes the panel
+        assert!(band(&buf, 39, 91, 150).starts_with("red opening  yellow undefined"));
+
+        // the window is centred on the pad: its middle cell is the pad itself
+        let (symbol, fg, _) = cell(&buf, 91 + 29, 1 + 18);
+        assert_eq!(symbol, ascii::FULL_BLOCK);
+        assert_eq!(fg, ascii::class_color(Class::Selected));
+        // and the picture carries every class of the fixture
+        assert!(colour_count(&buf, 91, 150, Class::Selected) > 20);
+        assert!(colour_count(&buf, 91, 150, Class::Undefined) > 20); // U1.2
+        assert!(colour_count(&buf, 91, 150, Class::Opening) > 10); // live paste
+        assert!(colour_count(&buf, 91, 150, Class::Ignored) > 10); // closed paste
+        assert!(colour_count(&buf, 91, 150, Class::Outline) > 0); // the board edge
+                                                                  // nothing of the picture leaks into the app's half
+        assert_eq!(colour_count(&buf, 0, 90, Class::Selected), 0);
+
+        // v again and the app is alone on the screen
+        send(&mut app, "v");
+        let buf = render(&mut app, 150, 40);
+        assert_ne!(buf[(90, 0)].symbol(), SEPARATOR);
+    }
+
+    #[test]
+    fn a_narrow_terminal_only_asks_for_a_wider_one() {
+        make_packed_app!(app);
+        send(&mut app, "v");
+        let buf = render(&mut app, 120, 40);
+        // 60 for the app, 1 for the line, 59 for the prompt
+        for y in 0..40 {
+            assert_eq!(buf[(60, y)].symbol(), SEPARATOR, "row {y}");
+        }
+        assert_eq!(band(&buf, 20, 61, 120), SPLIT_PROMPT);
+        for y in 0..40 {
+            if y != 20 {
+                assert_eq!(band(&buf, y, 61, 120), "", "row {y}");
+            }
+        }
+        // the left half is the live app and still takes keys
+        assert!(band(&buf, 0, 0, 60).contains("1 Pads"));
+        assert_eq!(app.index(), 0);
+        send(&mut app, "j");
+        assert_eq!(app.index(), 1);
+        let buf = render(&mut app, 120, 40);
+        assert!(band(&buf, 1, 0, 60).starts_with("pads 2/5"));
+    }
+
+    #[test]
+    fn the_picture_follows_the_cursor_and_the_pad_states() {
+        make_packed_app!(app);
+        send(&mut app, "v");
+        let buf = render(&mut app, 150, 40);
+        assert!(band(&buf, 0, 91, 150).starts_with("U1.1 · alpha top"));
+        let undefined = colour_count(&buf, 91, 150, Class::Undefined);
+        assert!(undefined > 0);
+
+        // the cursor moves: another pad is drawn
+        send(&mut app, "j");
+        let buf = render(&mut app, 150, 40);
+        assert!(band(&buf, 0, 91, 150).starts_with("U1.2 · alpha top"));
+
+        // opening U1.2 turns it red; back on U1.1 nothing is yellow any more
+        send(&mut app, "ok");
+        let buf = render(&mut app, 150, 40);
+        assert!(band(&buf, 0, 91, 150).starts_with("U1.1 · alpha top"));
+        assert_eq!(colour_count(&buf, 91, 150, Class::Undefined), 0);
+        assert!(colour_count(&buf, 91, 150, Class::Opening) > undefined);
+    }
+
+    #[test]
+    fn the_panel_says_so_when_there_is_no_pad() {
+        make_packed_app!(app);
+        send(&mut app, "v");
+        send(&mut app, "2N"); // every side off: nothing is left to draw
+        let buf = render(&mut app, 150, 40);
+        assert_eq!(band(&buf, 20, 91, 150).trim(), NO_PAD);
+        assert_eq!(colour_count(&buf, 91, 150, Class::Selected), 0);
+    }
+
+    #[test]
+    fn the_footer_lists_the_preview_and_the_split_keys() {
+        for page in 0..PAGE_NAMES.len() {
+            let items = page_items(page, false);
+            assert!(items.iter().any(|i| i == "p preview"), "page {page}");
+            assert!(items.iter().any(|i| i == "v split view"), "page {page}");
+            assert!(!items.iter().any(|i| i.contains("p/v")), "page {page}");
+        }
+    }
+
+    #[test]
+    fn the_split_view_survives_every_terminal_size() {
+        make_packed_app!(app);
+        send(&mut app, "v");
+        for (w, h) in [
+            (2u16, 8u16),
+            (60, 10),
+            (149, 40),
+            (400, 100),
+            (150, 40),
+            (1, 1),
+            (91, 2),
+            (150, 4),
+        ] {
+            let buf = render(&mut app, w, h);
+            assert_eq!(buf.area.width, w);
+            assert_eq!(buf.area.height, h);
+        }
+        // and on every page, with a search open
+        send(&mut app, "/");
+        send(&mut app, "u");
+        for page in ['1', '2', '3', '4'] {
+            app.handle_key(key(KeyCode::Esc));
+            send(&mut app, &page.to_string());
+            render(&mut app, 2, 8);
+            render(&mut app, 150, 40);
+            render(&mut app, 120, 40);
+        }
     }
 
     #[test]

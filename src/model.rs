@@ -56,7 +56,14 @@ pub const STATES: [&str; 3] = [STATE_UNDEFINED, STATE_OPEN, STATE_IGNORE];
 
 /// Orderable stencil sheet sizes (mm), long side first, smallest first.
 pub const STENCIL_SIZES: [(u32, u32); 8] = [
-    (270, 270), (380, 280), (420, 320), (450, 350), (460, 460), (520, 420), (600, 600), (700, 600),
+    (270, 270),
+    (380, 280),
+    (420, 320),
+    (450, 350),
+    (460, 460),
+    (520, 420),
+    (600, 600),
+    (700, 600),
 ];
 pub const DEFAULT_STENCIL_SIZE: (u32, u32) = (380, 280);
 pub const ORIENTATION_LANDSCAPE: &str = "landscape"; // long side horizontal
@@ -88,7 +95,10 @@ pub fn parse_size(text: &str) -> Result<(u32, u32), String> {
     }
     let mut dims = Vec::new();
     for p in parts {
-        let v: f64 = p.trim().parse().map_err(|_| format!("bad stencil size {text:?}"))?;
+        let v: f64 = p
+            .trim()
+            .parse()
+            .map_err(|_| format!("bad stencil size {text:?}"))?;
         dims.push(v.round() as u32);
     }
     Ok((dims[0].max(dims[1]), dims[0].min(dims[1])))
@@ -198,10 +208,16 @@ impl Side {
         self.board_bbox.3 - self.board_bbox.1
     }
     pub fn paste_objects(&self) -> &[GraphicObject] {
-        self.paste.as_ref().map(|g| g.objects.as_slice()).unwrap_or(&[])
+        self.paste
+            .as_ref()
+            .map(|g| g.objects.as_slice())
+            .unwrap_or(&[])
     }
     pub fn copper_objects(&self) -> &[GraphicObject] {
-        self.copper.as_ref().map(|g| g.objects.as_slice()).unwrap_or(&[])
+        self.copper
+            .as_ref()
+            .map(|g| g.objects.as_slice())
+            .unwrap_or(&[])
     }
     pub fn candidates(&self) -> impl Iterator<Item = &Pad> {
         self.pads.iter().filter(|p| p.is_candidate())
@@ -210,22 +226,36 @@ impl Side {
         self.pads.iter().filter(|p| p.has_paste)
     }
     pub fn open_pads(&self) -> impl Iterator<Item = &Pad> {
-        self.pads.iter().filter(|p| p.is_candidate() && p.state == STATE_OPEN)
+        self.pads
+            .iter()
+            .filter(|p| p.is_candidate() && p.state == STATE_OPEN)
     }
     pub fn closed_pads(&self) -> impl Iterator<Item = &Pad> {
         self.pads.iter().filter(|p| p.is_closed())
     }
     pub fn closed_paste_indices(&self) -> std::collections::BTreeSet<usize> {
-        self.closed_pads().flat_map(|p| p.paste_indices.iter().copied()).collect()
+        self.closed_pads()
+            .flat_map(|p| p.paste_indices.iter().copied())
+            .collect()
     }
     /// Paste objects that end up on the stencil (closed pads removed).
     pub fn active_paste_objects(&self) -> Vec<&GraphicObject> {
         let closed = self.closed_paste_indices();
-        self.paste_objects().iter().enumerate().filter(|(i, _)| !closed.contains(i)).map(|(_, o)| o).collect()
+        self.paste_objects()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !closed.contains(i))
+            .map(|(_, o)| o)
+            .collect()
     }
     pub fn closed_paste_objects(&self) -> Vec<&GraphicObject> {
         let closed = self.closed_paste_indices();
-        self.paste_objects().iter().enumerate().filter(|(i, _)| closed.contains(i)).map(|(_, o)| o).collect()
+        self.paste_objects()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| closed.contains(i))
+            .map(|(_, o)| o)
+            .collect()
     }
     pub fn has_openings(&self) -> bool {
         !self.active_paste_objects().is_empty() || self.open_pads().next().is_some()
@@ -282,7 +312,10 @@ pub fn all_sides(projects: &[Project]) -> Vec<SideId> {
     let mut out = Vec::new();
     for (pi, p) in projects.iter().enumerate() {
         for si in 0..p.sides.len() {
-            out.push(SideId { project: pi, side: si });
+            out.push(SideId {
+                project: pi,
+                side: si,
+            });
         }
     }
     out
@@ -412,7 +445,10 @@ impl Default for Config {
             size: DEFAULT_STENCIL_SIZE,
             orientation: ORIENTATION_LANDSCAPE.to_string(),
             layout: LayoutParams::default(),
-            ignore_prefixes: DEFAULT_IGNORE_PREFIXES.iter().map(|s| s.to_string()).collect(),
+            ignore_prefixes: DEFAULT_IGNORE_PREFIXES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             sides: BTreeMap::new(),
             pads: BTreeMap::new(),
         }
@@ -490,6 +526,8 @@ pub struct Layout {
     pub heuristic: String,
     /// number of cells that did not fit
     pub overflow: usize,
+    /// dots the `dot_clearance` rule removed (too close to a slot, hole or marker)
+    pub dots_dropped: usize,
 }
 
 impl Layout {

@@ -1709,6 +1709,7 @@ mod tests {
             dividers: vec![(5.0, 5.0, 55.0, 5.0), (5.0, 5.0, 5.0, 45.0)],
             heuristic: "bottom-left".to_string(),
             overflow: 0,
+            dots_dropped: 0,
         };
         (vec![alpha, beta], layout)
     }
