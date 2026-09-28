@@ -120,6 +120,7 @@ classDiagram
         +float dot_dia
         +float dot_pitch
         +float dot_line_gap
+        +float dot_clearance
         +float hole_grid
         +bool outer_border
         +str sort
@@ -297,6 +298,7 @@ The `[layout]` section and the Layout page of the TUI, one dataclass.
 | `dot_dia` | mm | 0.5 | Divider dot diameter. Also the minimum distance used to deduplicate dots. |
 | `dot_pitch` | mm | 3.0 | Centre-to-centre spacing of the divider dots. |
 | `dot_line_gap` | mm | 2.5 | How far *inside* its edge a cell's dotted line runs: half of this. Two touching cells therefore show two lines this far apart and the cut goes between them; 0 puts every line on the edge itself, so touching cells share one. |
+| `dot_clearance` | mm | 0.5 | Least metal left between a divider dot and a datum feature. A dot is dropped when `distance(dot centre, feature) < dot_dia/2 + dot_clearance`, i.e. when the neck of foil between the two openings would be thinner than this and could tear. The distance is measured to the slot obround (its centre segment minus `slot_width/2`), to the hole (its centre minus `hole_dia/2`) and to each of the X's two `dot_dia` wide strokes. 0 still drops the dots that overlap a feature; never negative. |
 | `hole_grid` | mm | 8.0 | `holes` datum only: the common grid every dowel hole (and so every jig pin) must land on, measured from the sheet origin. 0 switches it off. The `slots` datum has its own raster, `slot_pitch`. |
 | `outer_border` | - | False | Also dot the cell edges that lie on the outer boundary of the block. |
 | `sort` | - | `"height"` | `height` (tallest board first) or `name`. |
@@ -382,6 +384,7 @@ The placement of one side, produced by `layout.pack()`.
 | `dividers` | The dotted *lines* as `(x0, y0, x1, y1)`, not the cell edges: every cell edge contributes one, running `dot_line_gap / 2` inside it, so the four lines of a cell are its rectangle inset by that much. Collinear lines of different cells are merged. The renderer draws a faint dashed guide under each; the gerber contains only the dots. |
 | `heuristic` | Name of the MaxRects heuristic that won: `bottom-left`, `best short side` or `best area`. |
 | `overflow` | Number of cells that did not fit. |
+| `dots_dropped` | How many dots the `dot_clearance` rule removed (counted before the dots are deduplicated), so `len(dots) + dots_dropped` is at most the raw dot grid. The report's last line prints it. |
 
 `block_width` and `block_height` are derived from `block`. `heuristic` and
 `overflow` are ordinary dataclass fields with defaults; `pack()` sets them after

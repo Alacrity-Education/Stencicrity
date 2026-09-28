@@ -156,13 +156,17 @@ plus value (or the edit buffer with a trailing `_` while editing):
 | `dot_dia` | dot diameter | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_pitch` | dot pitch | length | mm | 0.5 | 0.1 | `gt0` |
 | `dot_line_gap` | dotted line gap (between touching cells) | length | mm | 0.5 | 0.0 | `ge0` |
+| `dot_clearance` | dot clearance (to slots/holes/marker) | length | mm | 0.1 | 0.0 | `ge0` |
 | `hole_grid` | hole grid (holes datum, 0 = off) | length | mm | 1.0 | 0.0 | `ge0` |
 | `outer_border` | outer border | bool | — | — | — | — |
 | `sort` | sort | choice | — | — | — | height \| name |
 
 `hole_inset` is the only unbounded number: it may go negative, which puts the
-dowel hole onto the dotted line instead of beside it. `slot_pitch` is the only
-row that steps by more than 0.5 mm: it moves in 5 mm steps and clamps at 1 mm,
+dowel hole onto the dotted line instead of beside it. `dot_clearance` is the
+only row that steps by less than 0.5 mm — 0.1 mm, the resolution the foil
+between a dot and a slot is judged at — and 0 is a sensible value for it (no
+clearance kept, only the dots that overlap a feature go). `slot_pitch` is the
+only row that steps by more than 0.5 mm: it moves in 5 mm steps and clamps at 1 mm,
 because it is a jig raster, not a fit-and-finish dimension — every cell is
 rounded up to a whole number of it, so a small change moves the whole sheet. `Field.numeric` is true
 only for `kind == "length"`, which is what decides between stepping/editing and

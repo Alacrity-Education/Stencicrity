@@ -137,6 +137,7 @@ marker_size = 4.0
 dot_dia = 0.5
 dot_pitch = 3.0
 dot_line_gap = 2.5
+dot_clearance = 0.5
 hole_grid = 8.0
 outer_border = off
 sort = height
@@ -177,6 +178,7 @@ RBARF/bottom/TP1.1@148.082,-99.568 = ignore   # SMDPad C ⌀1.00
 | | `dot_dia` | float > 0 | `dot_dia` |
 | | `dot_pitch` | float > 0 | `dot_pitch` |
 | | `dot_line_gap` | float >= 0 | `dot_line_gap` |
+| | `dot_clearance` | float >= 0 | `dot_clearance` (metal kept between a dot and a slot, hole or marker; a dot that would leave less is dropped) |
 | | `hole_grid` | float >= 0 | `hole_grid` (`holes` datum only) |
 | | `outer_border` (alias `border`) | bool | `outer_border` |
 | | `sort` | `height` \| `name` | `sort` |
@@ -283,8 +285,8 @@ can come from the file defaults to `None` in the parser, meaning "not given":
 1. `Config()` starts at the dataclass defaults.
 2. `load_config()` overwrites what the file has.
 3. `apply_cli_config(config, args)` overwrites what the user actually typed -
-   `--size`, `--landscape` / `--portrait`, `--ignore-prefix` and the ten layout
-   numbers. `--only` / `--exclude` are applied to the objects a moment later by
+   `--size`, `--landscape` / `--portrait`, `--ignore-prefix` and every
+   `[layout]` option, `--dot-clearance` included. `--only` / `--exclude` are applied to the objects a moment later by
    `apply_selection()`, after `apply_config()`, so they win over `[sides]` too.
 4. `save_config()` writes the result back, which is why a command line option is
    sticky: give `--gap 20` once and every later run uses 20 until something
@@ -294,10 +296,10 @@ Options that are *not* stored in the file and have to be repeated:
 `--include-tht`, `--open-shrink`, `--no-mirror-bottom`, `--out`, `--name`,
 `--px-per-mm`, `--batch`, `--no-open`, `--outline`, `--no-copper`.
 
-`_check_args()` rejects impossible numbers before anything is loaded (`--gap`
-and `--dot-line-gap` and `--hole-grid` and `--open-shrink` must not be negative;
-`--hole-dia`, `--dot-dia`, `--dot-pitch` and `--px-per-mm` must be positive) and
-exits through `parser.error()`, i.e. with code 2.
+`_check_args()` rejects impossible numbers before anything is loaded (`--gap`,
+`--dot-line-gap`, `--dot-clearance`, `--hole-grid` and `--open-shrink` must not
+be negative; `--hole-dia`, `--dot-dia`, `--dot-pitch` and `--px-per-mm` must be
+positive) and exits through `parser.error()`, i.e. with code 2.
 
 ## `apply_config` vs `collect_config`
 

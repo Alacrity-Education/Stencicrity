@@ -720,6 +720,8 @@ LAYOUT_FIELDS: tuple[Field, ...] = (
     Field("dot_pitch", "dot pitch", "length", "mm", 0.5, 0.1, "gt0"),
     Field("dot_line_gap", "dotted line gap (between touching cells)", "length", "mm",
           0.5, 0.0, "ge0"),
+    Field("dot_clearance", "dot clearance (to slots/holes/marker)", "length", "mm",
+          0.1, 0.0, "ge0"),
     Field("hole_grid", "hole grid (holes datum, 0 = off)", "length", "mm",
           1.0, 0.0, "ge0"),
     Field("outer_border", "outer border", "bool"),

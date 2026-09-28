@@ -100,6 +100,7 @@ _LAYOUT_FLOATS: dict[str, tuple[str, Optional[Callable[[float], bool]], str]] = 
     "dot_dia": ("dot_dia", lambda v: v > 0.0, "must be positive"),
     "dot_pitch": ("dot_pitch", lambda v: v > 0.0, "must be positive"),
     "dot_line_gap": ("dot_line_gap", lambda v: v >= 0.0, "must not be negative"),
+    "dot_clearance": ("dot_clearance", lambda v: v >= 0.0, "must not be negative"),
     "hole_grid": ("hole_grid", lambda v: v >= 0.0, "must not be negative"),
 }
 #: ``[layout]`` key -> LayoutParams attribute (booleans).
@@ -452,6 +453,9 @@ def format_config(config: Config, projects: list[Project]) -> str:
                "each cell's dotted line runs this/2 inside its edge; touching "
                "cells show two lines this far apart, cut between them "
                "(0 = on the edge)"),
+        _entry("dot_clearance", _num_text(params.dot_clearance),
+               "mm, a divider dot is dropped when less metal than this would "
+               "remain between it and a slot, hole or marker"),
         _entry("hole_grid", _num_text(params.hole_grid),
                "holes datum: hole centres snap to this grid, 0 = off"),
         _entry("outer_border", _bool_text(params.outer_border),

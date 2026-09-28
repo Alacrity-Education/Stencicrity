@@ -313,6 +313,10 @@ dividers cross from stacking openings on top of each other. `_Dedupe` is a
 spatial hash — points are bucketed by `floor(coord / min_dist)` and only the
 3x3 neighbouring buckets are searched.
 
+`_dots` returns the dots **and** how many of them the clearance rule threw away
+(`Layout.dots_dropped`, counted before the deduplication); see *Dots too close
+to a datum feature*.
+
 The dots are not a drawing aid: they are flashed into the paste layer as real
 round openings of `dot_dia`, so the sheet can be snapped apart along them.
 
@@ -364,9 +368,10 @@ and the extra slots only add choices for the jig, never contacts.
 
 A slot's outer wall is `slot_offset` (0.5 mm) inside the cell edge, so it lies
 inside its own cell but **crosses that cell's own dotted line**, which runs
-`dot_line_gap/2` (1.25 mm) in: the dots that fall inside it are dropped (see
-*Dots inside a datum opening*). It never reaches the neighbouring cell, whose
-own line is another `dot_line_gap` away. The inner wall is `slot_inner` inside
+`dot_line_gap/2` (1.25 mm) in: the dots that land on it, or within
+`dot_clearance` of it, are dropped (see *Dots too close to a datum feature*).
+It never reaches the neighbouring cell, whose own line is another
+`dot_line_gap` away. The inner wall is `slot_inner` inside
 the edge and the cell always has at least `min_pad_for_slots = slot_inner +
 slot_web` of padding (`_cell_of` saw to it), so the board keeps its `slot_web`
 of foil and the squeegee keeps a clear lane beside it.
@@ -435,23 +440,48 @@ ends up with none at all.
 Three empty lists. `_grid_of` also returns 0, so no snapping happens anywhere
 and every cell is exactly `board + gap`, whatever `hole_grid` says.
 
-### Dots inside a datum opening
+### Dots too close to a datum feature
 
-`_dots` is handed a `_Cover(areas, params)` and drops any dot whose centre would
-fall inside a slot, a dowel hole or an X marker — a dot there would be cut out
-of the foil twice and weaken the wall the pin touches, or blunt the X. `_Cover`
-stores every opening as a segment plus a radius (a slot is a stadium: its
-centre segment grown by `min(w, h)/2`; a hole is a point grown by
-`hole_dia/2`), an X as the bounding square of its cut foil (`marker_half` on
-each side of `Area.marker`, so anything in there sits in or right beside a
-stroke), and buckets both on a raster at least as coarse as the largest of
-them, so `covers(x, y)` only tests the shapes in one bucket. `_in_obround` is
-the point-in-stadium test, the square is tested directly.
+A dot beside a slot, a dowel hole or the orientation X leaves a neck of foil
+between the two openings, and a thin enough neck tears — on the wall the jig
+pin pushes against, or through the X. `_dots` is therefore handed a
+`_Cover(areas, params)` and drops every dot that would leave less than
+`dot_clearance` (0.5 mm) of metal:
 
-With the default numbers no dot is ever dropped by an X: a cell's dotted lines
-run 1.25 mm inside its edges and the X's square only begins 1.836 mm in, so the
-two lines nearest to it pass outside it by 0.586 mm. A wider `dot_line_gap` or
-a bigger `marker_size` moves a line into the square, and the dots in there go.
+```
+drop  <=>  distance(dot centre, feature) < dot_dia/2 + dot_clearance
+```
+
+`dot_dia/2` is the dot's own radius, so what the rule compares is the gap
+between the *edge* of the dot and the *edge* of the feature. `dot_clearance = 0`
+is not "no rule": it still drops every dot that actually overlaps a feature,
+which is a little more than the old test (the dot's *centre* inside it) did.
+
+`_Cover` stores every feature as a **capsule** — a segment plus a radius, the
+set of points within that radius of the segment — which makes the distance to
+it `_seg_dist(point, segment) - radius`:
+
+| feature | segment | radius |
+| --- | --- | --- |
+| obround slot | its centre segment, `slot_length - slot_width` long, along the slot's axis | `slot_width / 2` |
+| dowel hole | its centre (a point) | `hole_dia / 2` |
+| orientation X | each of the two strokes of `marker_strokes` | `dot_dia / 2` (the width they are cut with) |
+
+The X is therefore two capsules and the distance to it is the smaller of the
+two — not, as before, the bounding square of its cut foil, which also covered
+the empty corners between the strokes. Every capsule is bucketed by its
+bounding box grown by `dot_dia/2 + dot_clearance`, on a raster at least as
+coarse as the largest of them, so `near(x, y)` only measures the features filed
+under the dot's own bucket; `distance(x, y)` returns the metal itself (negative
+inside a feature) and is what `near` compares against the margin. No shapely,
+no polygons: a handful of arithmetic per dot.
+
+With the default numbers a cell's dotted lines run 1.25 mm inside its edges and
+the X reaches 2.086 mm in, so the two lines nearest to it keep 0.586 mm of foil
+to a stroke — 0.336 mm once the dot's own radius is taken off, less than the
+0.5 mm clearance. The dots that happen to land beside the X therefore go now
+where the old rule kept them (20 of them on the worked example below), and the
+slots take the rest.
 
 ## `fits`
 
@@ -520,15 +550,26 @@ could not be put on the raster is marked `OFF THE RASTER (the cell is too small
 for it)`. After the datum come the paste opening count, the candidate pads by state
 and the closed opening count. The last line counts the divider dots, their
 diameter and pitch, the number of dotted lines, how far inside its edge each of
-them runs, and whether the block boundary is included.
+them runs, whether the block boundary is included, and how many dots the
+clearance rule dropped:
+
+```
+Divider dots: 850 (⌀0.50 mm, pitch 3.00 mm, 38 dotted line(s), one per cell
+edge, 1.25 mm inside the edge; 160 dropped within 0.5 mm of a slot, hole or
+marker)
+```
+
+(one line in the file). The dropped count is `Layout.dots_dropped`, what
+`_dots` threw away before the deduplication, so `dots + dots_dropped` is at
+most the raw dot grid.
 
 ## Worked example
 
 Eight KiCad gerber zips in one folder, `--batch --no-open`, everything left at
 the defaults: 380x280 landscape, `gap` 30, `datum = slots` (4.5 x 8 mm slots,
 0.5 mm offset, 20 mm pitch, 3 mm web, 3 mm pins, a 4 mm orientation X), dots
-0.5 mm at 3 mm pitch, `dot_line_gap` 2.5, `hole_grid` 8 (holes datum only),
-`outer_border` off, `sort = height`.
+0.5 mm at 3 mm pitch, `dot_line_gap` 2.5, `dot_clearance` 0.5, `hole_grid` 8
+(holes datum only), `outer_border` off, `sort = height`.
 
 The first pack sees all 13 relevant sides and the block measures
 **600.00 x 260.00 mm** with 3 cells in overflow — the raster is not free. Before
@@ -559,13 +600,16 @@ Every cell is a whole number of 20 mm steps, every corner sits at
 `k * 20 - 3.5` mm and every cell touches its neighbours. The report says 10
 cells placed with MaxRects (bottom-left), 2 overflow, all 74 pins (one per
 slot) on the 20 mm `slot_pitch` raster, 20,238.9 mm2 of cell area spent on it,
-an X 3.5 mm inside each of the 12 datum corners, and 900 divider dots on 38
+an X 3.5 mm inside each of the 12 datum corners, and 850 divider dots on 38
 dotted lines — one line per cell edge, 1.25 mm inside it, a few of them merged
-where two cells are stacked along the same line. 110 dots of the raw dot grid
-fall inside a slot and are dropped, none inside an X: with a 0.5 mm offset a
+where two cells are stacked along the same line. 160 of the 1,021 positions on
+the raw dot grid come closer than the 0.5 mm `dot_clearance` to a feature and
+are dropped: 140 to a slot and 20 to an orientation X. With a 0.5 mm offset a
 slot always crosses the line of its own cell, which is the point (the foil
-beside the board stays free), and never the neighbour's, while the X sits well
-inside its own line.
+beside the board stays free), and never the neighbour's; the X stays clear of
+its lines but not by the full clearance, so the handful of dots that pass right
+beside it go too. The previous rule — drop a dot whose *centre* falls inside a
+feature — kept 900 dots here, 50 more.
 
 The same 13 sides with the other two datums, everything else unchanged (the
 first pack, before `PhotoAmp bottom` is dropped):

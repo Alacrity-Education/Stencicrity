@@ -80,8 +80,10 @@ straight border is one divider with evenly spaced dots.  The only lines that
 may be left out are the ones whose *edge* lies on the outer boundary of the
 block of cells (nothing has to be cut apart there): ``outer_border`` dots those
 too.  :attr:`Layout.dividers` holds the dotted lines themselves, not the cell
-edges.  A dot whose centre would fall inside a datum opening (a slot or a dowel
-hole) is dropped - there is no foil left there to guide anything.
+edges.  A dot too close to a datum feature is dropped: a slot, a dowel hole or
+an X marker that would be left less than ``dot_clearance`` of metal away from
+the dot's edge takes it off the line, because such a neck of foil tears.
+``dot_clearance = 0`` still drops the dots that overlap a feature.
 
 Sheet coordinates have their origin at the bottom left of the stencil, X to the
 right and Y up, in millimetres (see :mod:`pcbstencil.model`).
@@ -602,10 +604,11 @@ def pack(sides: list[Side], config: Config) -> Layout:
             and block[2] <= sheet_w + _FIT_EPS and block[3] <= sheet_h + _FIT_EPS)
 
     dividers = _dividers(areas, params.outer_border, params.dot_line_gap)
-    dots = _dots(dividers, params, _Cover(areas, params))
+    dots, dropped = _dots(dividers, params, _Cover(areas, params))
     layout = Layout(params=params, areas=areas, width=sheet_w, height=sheet_h,
                     block=block, fits=fits, dots=dots, dividers=dividers,
-                    heuristic=heuristic, overflow=len(overflow))
+                    heuristic=heuristic, overflow=len(overflow),
+                    dots_dropped=dropped)
     return layout
 
 
@@ -762,19 +765,24 @@ def _dividers(areas: list[Area], outer: bool, line_gap: float = 0.0
 
 def _dots(dividers: list[tuple[float, float, float, float]],
           params: LayoutParams, cover: "_Cover | None" = None
-          ) -> list[tuple[float, float]]:
+          ) -> tuple[list[tuple[float, float]], int]:
     """Dot centres along the dividers, centred on each segment and deduplicated.
 
-    A dot whose centre falls inside a datum opening (``cover``: a slot or a
-    dowel hole) is dropped - there is no foil there to mark.
+    Returns the dots and how many of them the clearance rule removed: a dot
+    that would leave less than ``dot_clearance`` of metal between itself and a
+    datum feature (``cover``: a slot, a dowel hole or an X marker) is dropped,
+    because that neck of foil would tear.
     """
     pitch = params.dot_pitch
-    inside = cover.covers if cover is not None else (lambda x, y: False)
+    close = cover.near if cover is not None else (lambda x, y: False)
     dots: list[tuple[float, float]] = []
+    dropped = 0
     for x0, y0, x1, y1 in dividers:
         length = math.hypot(x1 - x0, y1 - y0)
         if length <= 0.0:
-            if not inside(x0, y0):
+            if close(x0, y0):
+                dropped += 1
+            else:
                 dots.append((x0, y0))
             continue
         ux, uy = (x1 - x0) / length, (y1 - y0) / length
@@ -783,62 +791,73 @@ def _dots(dividers: list[tuple[float, float, float, float]],
         for i in range(n + 1):
             d = start + i * pitch
             px, py = x0 + ux * d, y0 + uy * d
-            if not inside(px, py):
+            if close(px, py):
+                dropped += 1
+            else:
                 dots.append((px, py))
     keep = _Dedupe(params.dot_dia)
-    return [p for p in dots if keep.add(*p)]
+    return [p for p in dots if keep.add(*p)], dropped
 
 
-def _in_obround(px: float, py: float, ax: float, ay: float,
-                bx: float, by: float, r: float) -> bool:
-    """Is ``(px, py)`` inside the segment ``a-b`` grown by ``r`` (a stadium)?"""
+def _seg_dist(px: float, py: float, ax: float, ay: float,
+              bx: float, by: float) -> float:
+    """Distance from ``(px, py)`` to the segment ``a-b``."""
     dx, dy = bx - ax, by - ay
     span = dx * dx + dy * dy
     t = 0.0 if span <= 0.0 else min(1.0, max(0.0, ((px - ax) * dx + (py - ay) * dy) / span))
-    qx, qy = px - (ax + t * dx), py - (ay + t * dy)
-    return qx * qx + qy * qy <= r * r
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
 class _Cover:
-    """The datum openings of a layout, hashed so a point test is O(1).
+    """The datum features of a layout, hashed so a clearance test is O(1).
 
-    Every opening - an obround slot or a round dowel hole - is stored as a
-    segment plus a radius and bucketed by a raster at least as coarse as the
-    largest of them, so a point only has to be tested against the openings in
-    its own bucket.  An X marker is covered by its bounding square (the two
-    strokes plus their width, :func:`marker_half`): a dot anywhere in there
-    sits in or right beside the X, so it is dropped as well.
+    Every feature is stored as a *capsule* - a segment plus a radius, the set
+    of points within that radius of the segment - which makes the distance
+    from a point to it ``_seg_dist(point, segment) - radius``:
+
+    * an obround slot is its centre segment (length ``slot_length -
+      slot_width``, along the slot's axis) grown by ``slot_width / 2``;
+    * a round dowel hole is its centre grown by ``hole_dia / 2``;
+    * an X marker is its two ``dot_dia`` wide strokes, so two capsules of
+      radius ``dot_dia / 2`` (:func:`marker_strokes`), and the distance to the
+      X is the smaller of the two.
+
+    :meth:`near` answers the question :func:`_dots` asks: would a dot of
+    ``dot_dia`` centred there leave less than ``dot_clearance`` of metal to
+    any feature?  That is ``distance < dot_dia / 2 + dot_clearance``, so with
+    ``dot_clearance = 0`` only a dot that actually overlaps a feature goes.
+    Capsules are bucketed by their bounding box grown by that same margin, so
+    a dot only has to be measured against the features in its own bucket.
     """
 
     def __init__(self, areas: list[Area], params: LayoutParams) -> None:
+        #: Metal a dot must leave: its own radius plus the clearance.
+        self.margin = (max(0.0, params.dot_dia) / 2.0
+                       + max(0.0, params.dot_clearance))
         shapes: list[tuple[float, float, float, float, float]] = []
-        squares: list[tuple[float, float, float, float]] = []
-        biggest = 0.0
-        half = marker_half(params)
+        stroke = max(0.0, params.dot_dia) / 2.0
         for area in areas:
             for cx, cy, w, h in area.slots:
                 r = min(w, h) / 2.0
                 ex, ey = max(0.0, w / 2.0 - r), max(0.0, h / 2.0 - r)
                 shapes.append((cx - ex, cy - ey, cx + ex, cy + ey, r))
-                biggest = max(biggest, w, h)
             if params.holes:
                 r = params.hole_dia / 2.0
                 for hx, hy in area.holes:
                     shapes.append((hx, hy, hx, hy, r))
-                    biggest = max(biggest, params.hole_dia)
-            if area.marker is not None and half > 0.0:
-                mx, my = area.marker
-                squares.append((mx - half, my - half, mx + half, my + half))
-                biggest = max(biggest, 2.0 * half)
-        self.cell = max(biggest, 1.0)
+            if area.marker is not None:
+                for sx0, sy0, sx1, sy1 in marker_strokes(area.marker,
+                                                         params.marker_size):
+                    shapes.append((sx0, sy0, sx1, sy1, stroke))
+        biggest = max((max(abs(bx - ax), abs(by - ay)) + 2.0 * r
+                       for ax, ay, bx, by, r in shapes), default=0.0)
+        self.cell = max(biggest + 2.0 * self.margin, 1.0)
         self.buckets: dict[tuple[int, int], list[tuple[float, float, float, float, float]]] = {}
-        self.squares: dict[tuple[int, int], list[tuple[float, float, float, float]]] = {}
         for shape in shapes:
             ax, ay, bx, by, r = shape
-            self._bucket(self.buckets, min(ax, bx) - r, min(ay, by) - r,
-                         max(ax, bx) + r, max(ay, by) + r, shape)
-        for square in squares:
-            self._bucket(self.squares, *square, square)
+            grown = r + self.margin
+            self._bucket(self.buckets, min(ax, bx) - grown, min(ay, by) - grown,
+                         max(ax, bx) + grown, max(ay, by) + grown, shape)
 
     def _bucket(self, target: dict, x0: float, y0: float, x1: float, y1: float,
                 item) -> None:
@@ -849,15 +868,23 @@ class _Cover:
                            int(math.floor(y1 / self.cell)) + 1):
                 target.setdefault((i, j), []).append(item)
 
-    def covers(self, x: float, y: float) -> bool:
-        """Is ``(x, y)`` inside a datum opening or an X marker's square?"""
-        if not self.buckets and not self.squares:
-            return False
+    def distance(self, x: float, y: float) -> float:
+        """Metal between ``(x, y)`` and the nearest feature (``inf``: none near).
+
+        Negative inside a feature.  Only the features filed under the point's
+        own bucket are measured, which is every one that could be within
+        :attr:`margin` of it.
+        """
+        if not self.buckets:
+            return math.inf
         key = (int(math.floor(x / self.cell)), int(math.floor(y / self.cell)))
-        if any(x0 <= x <= x1 and y0 <= y <= y1
-               for x0, y0, x1, y1 in self.squares.get(key, ())):
-            return True
-        return any(_in_obround(x, y, *shape) for shape in self.buckets.get(key, ()))
+        return min((_seg_dist(x, y, ax, ay, bx, by) - r
+                    for ax, ay, bx, by, r in self.buckets.get(key, ())),
+                   default=math.inf)
+
+    def near(self, x: float, y: float) -> bool:
+        """Would a dot centred at ``(x, y)`` come closer than the clearance?"""
+        return self.distance(x, y) < self.margin
 
 
 class _Dedupe:
@@ -1124,5 +1151,7 @@ def layout_report(layout: Layout, config: Config) -> str:
                  f"(⌀{params.dot_dia:.2f} mm, pitch {params.dot_pitch:.2f} mm, "
                  f"{len(layout.dividers)} dotted line(s), one per cell edge, "
                  f"{inset}"
-                 f"{', block boundary included' if params.outer_border else ''})")
+                 f"{', block boundary included' if params.outer_border else ''}"
+                 f"; {layout.dots_dropped} dropped within "
+                 f"{params.dot_clearance:g} mm of a slot, hole or marker)")
     return "\n".join(lines)

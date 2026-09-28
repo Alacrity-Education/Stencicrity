@@ -266,6 +266,7 @@ class LayoutParams:
     dot_dia: float = 0.5       # divider dot diameter (mm)
     dot_pitch: float = 3.0     # centre-to-centre distance of divider dots (mm)
     dot_line_gap: float = 2.5  # every cell's own dotted line runs dot_line_gap/2 inside its edge; touching cells thus show two lines this far apart and the cut goes between them (0 = on the edge)
+    dot_clearance: float = 0.5  # a divider dot is dropped when less than this much metal would remain between it and a slot, hole or marker (mm)
     # -- jig --
     hole_grid: float = 8.0     # holes datum: hole centres snap to a grid of this pitch (mm); 0 = off (the slots datum uses slot_pitch)
     outer_border: bool = False # also dot the cell edges on the outer boundary of the block
@@ -368,6 +369,7 @@ class Layout:
     dividers: list[tuple[float, float, float, float]] = field(default_factory=list)  # (x0,y0,x1,y1)
     heuristic: str = ""                                   # MaxRects heuristic that won
     overflow: int = 0                                     # number of cells that did not fit
+    dots_dropped: int = 0                                 # dots the dot_clearance rule removed (too close to a slot, hole or marker)
 
     @property
     def block_width(self) -> float:

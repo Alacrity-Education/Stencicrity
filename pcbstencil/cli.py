@@ -153,6 +153,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="distance between the two dotted lines of a cell "
                             "edge; 0 draws a single line on the edge "
                             "(default 2.5)")
+    group.add_argument("--dot-clearance", type=float, default=None, metavar="MM",
+                       help="metal kept between a divider dot and a slot, hole "
+                            "or marker; a dot that would leave less is dropped, "
+                            "0 drops only the dots that overlap one "
+                            "(default 0.5)")
     group.add_argument("--hole-grid", type=float, default=None, metavar="MM",
                        help="holes datum: put every dowel hole of the sheet on "
                             "one common grid of this pitch, 0 switches it off; "
@@ -230,6 +235,8 @@ def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
             ("--dot-pitch", args.dot_pitch, lambda v: v > 0, "must be positive"),
             ("--dot-line-gap", args.dot_line_gap, lambda v: v >= 0,
              "must not be negative"),
+            ("--dot-clearance", args.dot_clearance, lambda v: v >= 0,
+             "must not be negative"),
             ("--hole-grid", args.hole_grid, lambda v: v >= 0,
              "must not be negative"),
             ("--px-per-mm", args.px_per_mm, lambda v: v > 0, "must be positive"),
@@ -270,6 +277,7 @@ def apply_cli_config(config: Config, args: argparse.Namespace) -> None:
                         ("dot_dia", args.dot_dia),
                         ("dot_pitch", args.dot_pitch),
                         ("dot_line_gap", args.dot_line_gap),
+                        ("dot_clearance", args.dot_clearance),
                         ("hole_grid", args.hole_grid),
                         ("outer_border", args.outer_border),
                         ("sort", args.sort)):

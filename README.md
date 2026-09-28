@@ -76,7 +76,10 @@ inside the cell and the cut goes anywhere outside it. No line is ever drawn
 outside a cell. `dot_line_gap = 0` puts every line on the edge itself, so
 touching cells share one. Collinear pieces on the same line are merged into one
 straight line, and the outer boundary of the whole block is left blank because
-nothing has to be cut apart there (`outer_border = on` dots it too).
+nothing has to be cut apart there (`outer_border = on` dots it too). A dot that
+would come too close to an alignment slot, a dowel hole or the orientation X is
+left out: when less than `dot_clearance` (0.5 mm) of foil would be left between
+the dot and that opening, the neck of metal would tear, so the dot goes.
 
 Bottom sides are placed mirrored (x to -x) so the piece matches the board once
 the board is flipped over; `--no-mirror-bottom` places them as they are.
@@ -113,8 +116,8 @@ needs.
 A slot's outer wall is `slot_offset` (0.5 mm) inside the cell edge, so it
 **clips the cell's own dotted line** (which runs 1.25 mm inside the edge) but
 never reaches into the neighbouring cell: cells touch, their two dotted lines
-stay `dot_line_gap` (2.5 mm) apart, and the dots that fall inside a slot are
-simply dropped. Pushing the slots that far out frees the foil next to the
+stay `dot_line_gap` (2.5 mm) apart, and the dots that land within
+`dot_clearance` (0.5 mm) of a slot are simply dropped. Pushing the slots that far out frees the foil next to the
 board for the squeegee. The inner wall is `slot_offset + slot_width` (5 mm)
 inside the edge and there is always at least `slot_web` (3 mm) of foil between
 a slot and the board; the cell padding therefore has a floor of 8 mm before the
@@ -217,6 +220,7 @@ marker_size = 4.0         # mm, stroke length of the X (stroke width = dot_dia)
 dot_dia = 0.5             # mm
 dot_pitch = 3.0           # mm
 dot_line_gap = 2.5        # each cell's dotted line runs this/2 inside its edge; touching cells show two lines this far apart, cut between them (0 = on the edge)
+dot_clearance = 0.5       # mm, a divider dot is dropped when less metal than this would remain between it and a slot, hole or marker
 hole_grid = 8.0           # holes datum: hole centres snap to this grid, 0 = off
 outer_border = off        # also dot the cell edges on the outer boundary of the block
 sort = height             # height (tallest boards first) | name
@@ -258,7 +262,7 @@ footer lists the keys of the current page.
 | Pads | the candidates of the enabled sides: state, reference and pin, project, side, aperture function, shape, position; `*` adds the pasted pads (dimmed, marked with a `·`) so they can be closed |
 | Sides | switch board sides on and off; each row shows size, paste count and pads to decide |
 | Stencil | pick the sheet size; every row shows whether the block fits in landscape and in portrait |
-| Layout | spacing, the datum (`slots`/`holes`/`none`), hole diameter and inset, the six slot numbers (width, length, offset, pitch, web, pin diameter), the orientation marker and its size, dot diameter and pitch, dotted line gap, hole grid, outer border, sort order; the rows of the datum that is not selected are dimmed but stay editable |
+| Layout | spacing, the datum (`slots`/`holes`/`none`), hole diameter and inset, the six slot numbers (width, length, offset, pitch, web, pin diameter), the orientation marker and its size, dot diameter and pitch, dotted line gap, dot clearance, hole grid, outer border, sort order; the rows of the datum that is not selected are dimmed but stay editable |
 
 | key | action |
 | --- | --- |
@@ -270,7 +274,7 @@ footer lists the keys of the current page.
 | `n` / `N` | Pads: next / previous undefined pad |
 | `*` | Pads: show all pads, including the ones with paste |
 | `A` / `N` | Sides: all on / all off |
-| `+` / `-` (also `→` / `←`) | Layout: step a number by 0.5 mm (1 mm for the hole grid, 5 mm for the slot pitch), or cycle the datum |
+| `+` / `-` (also `→` / `←`) | Layout: step a number by 0.5 mm (0.1 mm for the dot clearance, 1 mm for the hole grid, 5 mm for the slot pitch), or cycle the datum |
 | `e` | Layout: type a value (typing replaces, Backspace edits, Enter accepts, Esc cancels); on the datum row it cycles |
 | `Enter` | Sides: toggle the side; Stencil: pick the size; Layout: edit the value like `e`; Pads: nothing |
 | `p` / `v` | re-render the preview / re-render and open it |
@@ -304,7 +308,7 @@ Everything goes to `--out` (default `./stencil-out`), prefixed with `--name`
 | `stencil-Edge_Cuts.gbr` | the sheet rectangle as a 0.1 mm outline, only with `--outline` |
 | `stencil.zip` | the gerbers above; this is what we upload |
 | `stencil-preview.png` | the preview |
-| `stencil-report.txt` | sheet and block size, the winning heuristic, a `Datum:` block naming the mode and its numbers (for `slots`: the raster, the walls, the slot count per edge) and, under `slots`, a `Marker:` block with the raster point the X sits on and how far its cut reaches — `off` when it is switched off, a WARNING when it would cross the cell edge or reach a slot — then a `Grid:` block saying whether every jig pin is on the raster — `slot_pitch` for the slots, `hole_grid` for the holes — and what it cost in cell area, then every cell with its board rectangle, its datum corner, the centre of its orientation X, all its slot or dowel hole coordinates and its jig pin centres (on the sheet and relative to the board corner) plus the direction to push it, pad counts, dot count, file list |
+| `stencil-report.txt` | sheet and block size, the winning heuristic, a `Datum:` block naming the mode and its numbers (for `slots`: the raster, the walls, the slot count per edge) and, under `slots`, a `Marker:` block with the raster point the X sits on and how far its cut reaches — `off` when it is switched off, a WARNING when it would cross the cell edge or reach a slot — then a `Grid:` block saying whether every jig pin is on the raster — `slot_pitch` for the slots, `hole_grid` for the holes — and what it cost in cell area, then every cell with its board rectangle, its datum corner, the centre of its orientation X, all its slot or dowel hole coordinates and its jig pin centres (on the sheet and relative to the board corner) plus the direction to push it, pad counts, the dot count with how many dots were dropped for coming closer than `dot_clearance` to a slot, hole or marker, file list |
 
 The gerbers are RS-274X with X2 attributes in the format KiCad writes
 (`FSLAX46Y46`, `MOMM`). The preview shows the whole sheet on a dark background
@@ -340,8 +344,8 @@ outlines, and the X orientation marker just inside each datum corner.
 - `--name NAME`, `--out DIR` - name and place of the generated files;
   `--config FILE` - the configuration file (default `./.stencicrity`).
 - `--size WxH`, `--portrait`, `--gap MM`, `--hole-grid MM`,
-  `--dot-line-gap MM`, `--sort name` and the other layout numbers; all of them
-  are saved into the `.stencicrity` file.
+  `--dot-line-gap MM`, `--dot-clearance MM`, `--sort name` and the other layout
+  numbers; all of them are saved into the `.stencicrity` file.
 - `--datum slots|holes|none` - which alignment features every cell gets, with
   `--slot-width MM`, `--slot-length MM`, `--slot-offset MM`, `--slot-pitch MM`,
   `--slot-web MM` and `--pin-dia MM` for the slots and `--hole-dia MM` /
