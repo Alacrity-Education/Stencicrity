@@ -1,5 +1,12 @@
 # Distributing `stencicrity` to a Windows + Arch Linux fleet — research report
 
+> **Historical.** This report predates the Rust port: it was written while the tool
+> was the `pcbstencil` Python package, and everything it says about wheels, PyPI,
+> shapely, Pillow, PyInstaller and the `python-*` distribution packages describes
+> that version, not the crate. The shipping decision it argued for — native Arch and
+> Debian packages built by a GitHub Actions release workflow — is what was
+> implemented; see [development.md](development.md) for the packaging as it stands.
+
 Date: 2026-09-15. Research only — nothing was implemented, nothing in
 `/home/alex.lucaci/comanda-stencil` was touched. All builds and downloads below happened in
 `/tmp/claude-2017/…/scratchpad/dist-research/`.

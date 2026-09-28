@@ -1,459 +1,325 @@
 # The TUI
 
-`pcbstencil/tui.py` is the curses front-end that runs between the first preview
-and the generation step. `run_tui(pads, sides, config, on_preview=...,
-compute_layout=..., title=...)` is its only entry point. It mutates the live
-objects in place — `pad.state`, `side.enabled`, `config.size`,
-`config.orientation` and the fields of `config.layout` — and never touches
-`config.sides` or `config.pads`; the caller collects those from the objects
-afterwards with `collect_config` (see [pads-and-config.md](pads-and-config.md)).
-It returns `True` when the user asked to generate and `False` when they quit,
-and with neither pads nor sides it returns `True` immediately without touching
-the terminal at all.
+`src/tui.rs` is the ratatui front-end that runs between the first preview and
+the generation step. It is the largest module in the crate, and almost all of
+it is pure: everything above the `App` struct is plain functions over plain
+data, unit tested in place and driven from outside the crate by
+`tests/tui_api.rs` and `tests/tui_split.rs`.
+
+```
+run_tui(&mut projects, &sides, &mut config, hooks, title) -> Result<bool>
+```
+
+true when the user pressed `w`, false on `q`. It mutates `pad.state`,
+`side.enabled`, `config.size`, `config.orientation` and `config.layout.*` in
+place and never touches `config.sides` / `config.pads` — the caller collects
+those from the objects afterwards. With neither pads nor sides it returns
+`Ok(true)` without touching the terminal at all.
 
 ## Structure
 
-Everything above `class _App` is pure: no curses call, no global state, no I/O.
-That is deliberate — those functions carry the whole behaviour of the UI and can
-be exercised without a terminal. `_App` only draws and dispatches keys.
+| Layer | What it is |
+| --- | --- |
+| pure helpers | state cycling, row formatting, field stepping and validation, search matching and ranking, footer wrapping, the split plan, the fit line |
+| `App` | all the state, `draw()` and `handle_key()` — and nothing else |
+| `run_tui` / `event_loop` | the terminal, the event loop, the `TerminalGuard` |
 
-| group | functions | what they do |
+`TuiHooks` is how the TUI reaches back into the pipeline without depending on
+it:
+
+| Callback | Signature | Used for |
 | --- | --- | --- |
-| pad states | `cycle_state`, `next_state`, `allowed_state`, `count_states`, `component_pads`, `apply_component`, `find_undefined`, `visible_pads` | which state a key gives a pad, which states a pad may take, and which pads are listed |
-| text | `clip`, `_col`, `fmt_mm`, `ellipsis`, `_wrap`, `wrap_items`, `wrap_text`, `page_items` | column padding, number formatting, footer line breaking and the key-help items of a page |
-| search | `query_words`, `match_count`, `matches`, `filter_counts`, `filter_rows`, `full_matches`, `match_summary`, `search_char`, `restore_index` | the whole filter: matching, ranking, the sub-header tail and cursor preservation |
-| key decisions | `search_action`, `escape_action` | what a key does while the search is open, and which of the four things Esc undoes |
-| rows | `pad_position`, `board_text`, `pad_fields`, `side_fields`, `row_segments`, `format_row`, `pads_header`, `side_row`, `orientation_size`, `preset_row`, `fit_segments`, `fit_line` | the exact text of every row and of the status line |
-| layout fields | `Field`, `LAYOUT_FIELDS`, `DATUM_ROWS`, `field_applies`, `value_text`, `valid_value`, `step_value`, `parse_number`, `toggle_field`, `format_field_row`, `edit_buffer` | the editable parameters of the Layout page, their validation and which of them the current datum applies to |
+| `compute_layout` | `&mut dyn FnMut(&[Project], &Config) -> Layout` | re-pack after every change, and 16 times for the Stencil page's fit table |
+| `on_preview` | `&mut dyn FnMut(&[Project], &Config, Option<PadId>, bool) -> String` | render the PNG (and open it); returns the path |
 
-### Draw and dispatch
+`event_loop` calls `before_draw()`, draws, then `run_preview()` — so the
+`rendering…` frame is on screen before the blocking render starts — and then
+blocks on one key event. A resize needs no handling: `Terminal::draw` resizes
+and the next frame reads the new size.
 
-`_App.run(win)` is the loop:
-
-```
-curs_set(0), _init_colors(), keypad(True), _refresh_layout()
-loop:
-    _sync_visible()                    # the pad list follows the enabled sides
-    _refresh_presets() if on the Stencil page and the cache is empty
-    _draw(win)
-    key = win.getch()                  # ERR -> continue, KEY_RESIZE -> repaint
-    result = _handle(win, key)         # None keeps running, True/False leaves
-```
-
-`_draw` first works out how much room each band gets, from the outside in:
-
-| band | rows | condition |
-| --- | --- | --- |
-| tabs | 1 | height >= 3 |
-| sub-header | 1 | height >= 7 |
-| body | the rest | — |
-| fit line | 1 | height >= 5 |
-| footer | 1 or 2 | whatever `_footer_lines` produced, capped by what is left |
-
-The footer is wrapped first (`_footer_lines`), and when the result does not fit
-into the remaining rows it is wrapped again into fewer lines, so the body never
-disappears because the key help is long. `_draw` then calls `_draw_tabs`, writes
-the sub-header, calls `_scroll` and delegates the body to `_draw_pads`,
-`_draw_sides`, `_draw_stencil` or `_draw_layout`.
-
-`_handle` dispatches the global keys first (Esc, search, page switching, quit,
-preview, `w`, movement, `g`/`G`) and hands anything left to `_handle_pads`,
-`_handle_sides`, `_handle_stencil` or `_handle_layout`. Inline editing and
-search mode short-circuit the whole dispatch at the top: while `self.editing` is
-not `None` every key goes to `_edit_key`, and while `self.search` is not `None`
-every key goes to `_search_key`.
-
-Because a finished search can leave a filter behind, the page handlers work on
-the row under the cursor (`_current_row()`), never on an index into the
-unfiltered list.
-
-The cursor and the scroll offset are per page: `self.cursor` and `self.top` are
-four-element lists, so switching pages and coming back keeps the position.
-`_scroll` moves `top` the least it can to keep the cursor row visible; on the
-Pads page it subtracts one row for the column header, but only when the body is
-at least 3 rows tall (below that the header is not drawn either).
+`TerminalGuard::drop` calls `ratatui::restore()`, so the terminal comes back
+whatever happens, a panic included.
 
 ## The four pages
 
-The session starts on Pads when any pad is a candidate or when there are no
-sides at all, otherwise on Sides:
+Switched with `1`–`4`, `Tab` and `Shift-Tab`. The session starts on **Pads**
+when there is anything to decide, on **Sides** otherwise.
 
-```python
-has_candidates = any(pad.is_candidate for pad in self.pads)
-self.page = PAGE_PADS if (has_candidates or not sides) else PAGE_SIDES
-```
+The screen is: a tab bar with the title, a sub-header, the body, the always
+visible fit line, and one or two footer lines. On a short terminal they are
+given up in order: the sub-header goes below 7 rows, the fit line below 5, the
+tab bar below 3, and the key help is re-wrapped into whatever lines are left.
 
 ### 1. Pads
 
-Lists the pads of the *enabled* sides: by default only the candidates (copper
-without paste), and with `*` every pad, so the ones that already have a paste
-opening can be closed. The column header comes from `pads_header()`; a row is
-built by `row_segments` as four chunks — the cursor arrow, the state field, the
-pad field and the rest — so the state column can be coloured and a pasted pad
-dimmed independently. The first row below has paste, the second is a candidate:
+One row per candidate pad of the **enabled** sides:
 
 ```
-  state         pad          project              side    function      shape            position
-→ + open      · D1.1         RBARF                top     SMDPad        R 0.70x0.70      x= 148.775 y= -96.120
-  - ignore      TP1.1        RBARF                bottom  SMDPad        C ⌀1.00          x= 148.082 y= -99.568
+  state       pad          project              side    function      shape            position
+→ ? undefined  U3.14       indxworks            bottom  SMDPad        R 0.28x0.52      x= 148.082 y= -99.568
+  - ignore   · TP1.1       RBARF                top     SMDPad        C ⌀1.00          x=  12.500 y=   4.250
 ```
 
-The state marker is `?` undefined, `+` open, `-` ignore (`STATE_MARKERS`), and
-`PASTE_MARK` (`· `) sits in front of the reference of a pad that already has
-paste, so a terminal without colours can still tell them apart. The sub-header
-shows the position in the list, the mode (`pads to decide (n)` or
-`all pads (n) — pads with paste are dimmed; ignore closes their opening`), the
-`*` hint and, when some pads are hidden because their side is switched off,
-`(n hidden on disabled sides)`.
+The marker in front of the state is `+` for open, `-` for ignore and `?` for
+undefined, and the state itself is coloured. A pad that already has paste is
+dimmed and marked with a `·` in front of its reference, so a terminal without
+colour can still tell it apart.
+
+The sub-header says `pads <n>/<total>`, whether the list is "pads to decide" or
+"all pads", the `*` hint, and how many pads are hidden on disabled sides.
 
 ### 2. Sides
 
-One row per relevant side, `side_row`: a `[x]` / `[ ]` switch, the project and
-side name with `(mirrored)` appended, the board size, the number of paste
-openings, the number of pads to decide and how many of those are still
-undefined. The sub-header counts the enabled sides. Rows of disabled sides are
-dimmed.
+```
+  [x] alacrity badge · top          85.7 x    54.1 mm   paste 46     pads to decide 4      undefined 0
+  [ ] LED lamp · top               100.1 x    78.1 mm   paste 15     pads to decide 0      undefined 0
+```
+
+Switching a side off removes its cell from the sheet *and* its pads from the
+Pads page; `sync_visible` follows the cursor by pad identity into whatever
+list results, and re-applies an active filter to it.
 
 ### 3. Stencil
 
-One row per entry of `STENCIL_SIZES` — currently eight: 270x270, 380x280,
-420x320, 450x350, 460x460, 520x420, 600x600 and 700x600 mm, long side first.
-(The README still lists seven and omits 270x270; the code is the current state.)
-`preset_row` marks the selected size with `●`, prints the sheet size in both
-orientations and, for each, `fits` / `NO` / `?` from the preset cache (`?` means
-packing raised for that combination and the fit is unknown):
+One row per preset, with the verdict for both orientations:
 
 ```
-→   270 x 270 mm   landscape: 270 x 270  NO      portrait: 270 x 270  NO
-  ● 380 x 280 mm   landscape: 380 x 280  NO      portrait: 280 x 380  fits       ← landscape
-    420 x 320 mm   landscape: 420 x 320  fits    portrait: 320 x 420  fits
+  ● 420 x 320 mm   landscape: 420 x 320  fits  portrait: 320 x 420  NO            ← landscape
 ```
 
-(Real output for the eight sample projects with all 13 sides enabled: the
-default sheet only takes them in portrait.) 270x270 is square, so its two
-orientations describe the same sheet and always agree. The sub-header shows the
-current sheet size, the orientation and the block size.
+The two columns come from `refresh_presets`, which packs the whole sheet 16
+times (8 sizes x 2 orientations) with a cloned `Config`. That is a few
+milliseconds, and it is recomputed lazily: `presets` is set to `None` by every
+change and refilled by `before_draw` when this page is in front.
 
 ### 4. Layout
 
-One row per `Field` of `LAYOUT_FIELDS`, rendered by `format_field_row` as label
-plus value (or the edit buffer with a trailing `_` while editing):
+`LAYOUT_FIELDS` is a `static [Field; 19]` and it is the single source of the
+page, the stepping, the inline editor and the validation:
 
-| attr | label | kind | unit | step | minimum | rule |
-| --- | --- | --- | --- | --- | --- | --- |
-| `gap` | spacing (gap between boards) | length | mm | 0.5 | 0.0 | `ge0` |
-| `datum` | datum (alignment features) | choice | — | — | — | slots \| holes \| none |
-| `hole_dia` | hole diameter | length | mm | 0.5 | 0.1 | `gt0` |
-| `hole_inset` | hole inset (dotted line to hole edge) | length | mm | 0.5 | none | `any` |
-| `slot_width` | slot width | length | mm | 0.5 | 0.1 | `gt0` |
-| `slot_length` | slot length | length | mm | 0.5 | 0.1 | `gt0` |
-| `slot_offset` | slot offset (edge to outer wall) | length | mm | 0.5 | 0.0 | `ge0` |
-| `slot_pitch` | slot pitch (modular jig raster) | length | mm | 5.0 | 1.0 | `gt0` |
-| `slot_web` | slot web (to board) | length | mm | 0.5 | 0.1 | `gt0` |
-| `pin_dia` | pin diameter | length | mm | 0.5 | 0.1 | `gt0` |
-| `marker` | orientation marker | bool | — | — | — | — |
-| `marker_size` | marker size | length | mm | 0.5 | 0.5 | `gt0` |
-| `dot_dia` | dot diameter | length | mm | 0.5 | 0.1 | `gt0` |
-| `dot_pitch` | dot pitch | length | mm | 0.5 | 0.1 | `gt0` |
-| `dot_line_gap` | dotted line gap (between touching cells) | length | mm | 0.5 | 0.0 | `ge0` |
-| `dot_clearance` | dot clearance (to slots/holes/marker) | length | mm | 0.1 | 0.0 | `ge0` |
-| `hole_grid` | hole grid (holes datum, 0 = off) | length | mm | 1.0 | 0.0 | `ge0` |
-| `outer_border` | outer border | bool | — | — | — | — |
-| `sort` | sort | choice | — | — | — | height \| name |
+| Field | Label | Kind | Step | Minimum | Rule |
+| --- | --- | --- | --- | --- | --- |
+| `Gap` | spacing (gap between boards) | length | 0.5 | 0 | ≥ 0 |
+| `Datum` | datum (alignment features) | choice | | | slots / holes / none |
+| `HoleDia` | hole diameter | length | 0.5 | 0.1 | > 0 |
+| `HoleInset` | hole inset (dotted line to hole edge) | length | 0.5 | — | any |
+| `SlotWidth` | slot width | length | 0.5 | 0.1 | > 0 |
+| `SlotLength` | slot length | length | 0.5 | 0.1 | > 0 |
+| `SlotOffset` | slot offset (edge to outer wall) | length | 0.5 | 0 | ≥ 0 |
+| `SlotPitch` | slot pitch (modular jig raster) | length | 5.0 | 1.0 | > 0 |
+| `SlotWeb` | slot web (to board) | length | 0.5 | 0.1 | > 0 |
+| `PinDia` | pin diameter | length | 0.5 | 0.1 | > 0 |
+| `Marker` | orientation marker | bool | | | |
+| `MarkerSize` | marker size | length | 0.5 | 0.5 | > 0 |
+| `DotDia` | dot diameter | length | 0.5 | 0.1 | > 0 |
+| `DotPitch` | dot pitch | length | 0.5 | 0.1 | > 0 |
+| `DotLineGap` | dotted line gap (between touching cells) | length | 0.5 | 0 | ≥ 0 |
+| `DotClearance` | dot clearance (to slot/hole/marker) | length | 0.1 | 0 | ≥ 0 |
+| `HoleGrid` | hole grid (holes datum, 0 = off) | length | 1.0 | 0 | ≥ 0 |
+| `OuterBorder` | outer border | bool | | | |
+| `Sort` | sort | choice | | | height / name |
 
-`hole_inset` is the only unbounded number: it may go negative, which puts the
-dowel hole onto the dotted line instead of beside it. `dot_clearance` is the
-only row that steps by less than 0.5 mm — 0.1 mm, the resolution the foil
-between a dot and a slot is judged at — and 0 is a sensible value for it (no
-clearance kept, only the dots that overlap a feature go). `slot_pitch` is the
-only row that steps by more than 0.5 mm: it moves in 5 mm steps and clamps at 1 mm,
-because it is a jig raster, not a fit-and-finish dimension — every cell is
-rounded up to a whole number of it, so a small change moves the whole sheet. `Field.numeric` is true
-only for `kind == "length"`, which is what decides between stepping/editing and
-toggling. See [data-model.md](data-model.md) for what each parameter means.
+`datum_row(attr)` marks the rows that only mean something under one datum —
+the two hole rows under `holes`, the six slot rows plus the two marker rows
+under `slots`. `field_applies` is false for those under any other datum and
+they are drawn dimmed, but they stay fully editable, so a value can be set
+before switching over.
 
-**The datum row and dimming.** `datum` is an ordinary `choice` field, so space,
-`+`/`→`, `e` and Enter all cycle it (`-`/`←` cycles backwards) through
-slots → holes → none. It also decides which of the other rows are *relevant*:
-`DATUM_ROWS` maps each datum-specific attribute to the mode it belongs to and
-`field_applies(field, params)` answers whether a row matters right now — the
-two hole rows under `slots`, the eight slot and marker rows (`slot_width`,
-`slot_length`, `slot_offset`, `slot_pitch`, `slot_web`, `pin_dia`, `marker`,
-`marker_size`) under `holes`, and both groups under `none`, are drawn with
-`curses.A_DIM` added to their attribute (the cursor's `A_REVERSE` still wins
-visually). The rows that are shared by
-every datum — spacing, the dots, the hole grid, the outer border and the sort
-order — are never dimmed; `hole_grid` only bites under `holes`, which its label
-says.
+### The status line and the fit line
 
-Dimming is presentation only. A dimmed row still steps, still edits and still
-saves: that is deliberate, so a slot size can be dialled in before switching
-the datum over, and so an old configuration's `hole_dia` is not silently lost
-while the default `slots` datum is active.
+The fit line sits above the footer and is always there:
 
-### The status line
+```
+stencil 420x320 landscape · block 380.0 x 220.0 mm · FITS · pads: undefined 10  open 0  ignore 38  closed 0
+```
 
-Above the footer, on every page, `fit_segments` draws: the stencil size and
-orientation, the block size, `FITS` or `DOES NOT FIT` (or `NO LAYOUT` when
-packing failed), and the pad counts — undefined, open, ignore and closed. The
-counts come from `count_states` over *every* pad of the enabled sides
-(`_enabled_pads`), not only the listed ones, so `closed` stays visible in the
-default pads-to-decide view where no pasted pad is listed at all.
+`FITS` is green, `DOES NOT FIT` red. The footer shows the key help of the
+current page, or the last status message when there is one; `wrap_items` lays
+the help items out over at most `FOOTER_LINES` (2) lines and marks a truncation
+with `…`.
 
 ## Keys
 
-Global, handled before the page dispatch:
+`handle_key` dispatches in this order: an open inline edit swallows everything,
+then an open search does, then Ctrl-C quits and any other Ctrl-chord is
+ignored, then Esc, then the global keys, then the page handler.
 
-| key | action |
+| Key | Everywhere |
 | --- | --- |
-| Esc | cancel an edit, else a pending confirmation, else the filter — never quits (`escape_action`) |
-| `/` | start a fresh, empty search (Pads and Sides pages only) |
-| `1` `2` `3` `4` | go to that page |
-| Tab | next page; Shift-Tab (`KEY_BTAB` or 353) previous page |
-| `q` | quit without generating |
-| `p` | re-render the preview |
-| `v` | re-render the preview and open it in the viewer |
-| `w` | generate, on *every* page |
-| `↑` `k`, `↓` `j` | move one row |
-| PgUp / PgDn | move by window height minus 5 rows |
-| Home / End, `g` / `G` | first / last row, on every page |
+| `1`–`4`, `Tab`, `Shift-Tab` | change page |
+| `↑`/`↓`, `k`/`j` | move one row |
+| `PgUp`/`PgDn` | move a screenful |
+| `Home`/`g`, `End`/`G` | first / last row |
+| `p` | render the preview PNG **and** open it in the image viewer |
+| `v` | toggle the split view |
+| `w` | generate; twice when the layout does not fit |
+| `q`, `Ctrl-C` | quit without generating |
+| `Esc` | see below — never quits |
+| `/` | start a search (Pads and Sides only) |
 
-Pads page:
+| Key | Pads | Sides | Stencil | Layout |
+| --- | --- | --- | --- | --- |
+| `space` | cycle the state | toggle the side | pick the size | flip a bool, cycle a choice (a number says "press e") |
+| `Enter` | — | toggle the side | pick the size | edit the value |
+| `o` | set `open` | — | toggle the orientation | — |
+| `i` | set `ignore` | — | — | — |
+| `a` | apply this pad's state to the whole component | — | — | — |
+| `n` / `N` | next / previous undefined candidate | all off (`N`) | — | — |
+| `*` | show all pads | — | — | — |
+| `A` | — | all on | — | — |
+| `+`/`=`/`→`, `-`/`_`/`←` | — | — | — | step by the field's step, or cycle a choice forward / backward |
+| `e` | — | — | — | inline edit |
 
-| key | action |
-| --- | --- |
-| space | `next_state`: cycle the pad under the cursor |
-| `o` / `i` | set it open / ignore |
-| `a` | apply the cursor pad's state to every pad of the same component |
-| `n` / `N` | next / previous undefined candidate, wrapping around |
-| `*` | show all pads, including the ones with paste |
-| Enter | nothing — `w` generates |
+`cycle_state` is `open → ignore → open`; `undefined` is only ever a starting
+point, so `next_state` sends an untouched candidate to `open` first. A pad
+that already has paste can only be `open` or `ignore` (`allowed_state`), so
+`a` skips the members of a component that may not take the target state.
 
-Sides page:
-
-| key | action |
-| --- | --- |
-| space, Enter | toggle the side under the cursor |
-| `A` / `N` | all sides on / all sides off |
-
-Stencil page:
-
-| key | action |
-| --- | --- |
-| space, Enter | pick the size under the cursor |
-| `o` | toggle the orientation |
-
-Layout page:
-
-| key | action |
-| --- | --- |
-| `+` `=` `→` | step the value up (or toggle / cycle forwards) |
-| `-` `_` `←` | step the value down (or toggle / cycle backwards) |
-| space | toggle a switch or cycle a choice (`datum`, `sort`); on a number it only prints a hint |
-| `e`, Enter | start editing the number inline; on a choice row it cycles instead |
-
-Two of these deviate from the obvious: `o` opens a pad on the Pads page but
-toggles the orientation on the Stencil page, and `N` is "previous undefined" on
-Pads and "all sides off" on Sides. Everything that leaves the TUI is one key on
-every page: `w` generates, `q` quits, and Esc only ever *undoes* something.
-
-The footer text comes from `page_items(page, filtered)` — `PAGE_ITEMS[page]`
-(one tuple of `"key description"` items per page) plus `FILTER_ITEM`
-(`esc clear filter`, inserted behind `/ search`) while a filter is active —
-from `EDIT_ITEMS` while editing and from `SEARCH_ITEMS` while searching.
-`PAGE_KEYS`, `EDIT_KEYS` and `SEARCH_KEYS` are the plain items joined with two
-spaces into a single line, kept for callers and tests that want the help as one
-string. Every page's plain line fits into 139 columns, which is what keeps the
-footer at one line on a wide terminal; with the filter item the Pads help needs
-two.
+`escape_action(editing, searching, pending, filtered)` is Esc's whole
+behaviour, in priority order: cancel the inline edit, else leave the search
+(dropping its filter), else cancel a pending `w`, else clear the filter a
+finished search left, else do nothing at all.
 
 ## Search
 
-`/` starts a search, but only on the two list pages (`_searchable`). It always
-starts empty: a filter that is still on the list is dropped at once, so typing
-replaces it live instead of narrowing it. Search mode swallows every key —
-`search_action(key)` says which of them does what: the printable ones extend
-the query (`search_char`), Backspace shortens it, the arrows and
-PgUp/PgDn/Home/End still move the cursor, Enter leaves the search *keeping* the
-filter and Esc leaves it dropping the filter. Nothing else — you cannot toggle
-a side or set a pad state while searching.
+`/` opens a vim-like incremental search on the Pads and Sides pages. Every
+printable ASCII character goes into the query (`search_char` rejects control
+keys and anything with Ctrl or Alt), Backspace removes one, and the arrows,
+PgUp/PgDn and Home/End still move the cursor through the filtered list.
 
-The matching is word based:
+Matching is per word:
 
-- `query_words(query)` splits on whitespace, lower-cases and drops duplicates
-  while keeping the order, so `"u1 u1"` is the same one-word query as `"u1"`.
-- `match_count(fields, query)` counts how many *distinct* words are a
-  case-insensitive substring of *any* field. Words are OR-ed for the filter.
-- `matches(fields, query)` is `match_count >= 1`; a blank query matches
-  everything.
-- `filter_counts(rows, fields_of, query)` keeps the rows with a count of at
-  least 1 and sorts them by descending count. The sort is stable, so rows with
-  the same count keep their original order and the best matches come first. A
-  blank query returns every row in order with a count of 0.
-- `full_matches(counts, query)` counts the rows that matched *every* word.
-- `match_summary(shown, total, full, words)` builds the sub-header tail:
-  `no match`, `(n of N)` for a one-word query, `(n of N, k full)` for more.
+* `query_words` lower-cases the query, splits on whitespace and drops
+  duplicates, so `"u1 u1"` is the one-word query `"u1"`;
+* `match_count(fields, query)` counts how many of those words are a
+  case-insensitive substring of **any** field;
+* a row is kept when the count is at least 1 — the words are OR-ed;
+* `filter_counts` sorts by the count, descending, with a stable sort, so the
+  rows that matched the most words come first and ties keep their original
+  order;
+* a row that matched **every** word is a *full* match and is drawn bold.
 
-The fields a row exposes are `pad_fields` — label, reference, pin, project,
-side, aperture function, shape, state, the position text, and a synthetic field
-that is `"paste"` for a pad with a paste opening and `"paste closed"` once it
-was closed — and `side_fields` — project name, side name, label, `"mirrored"`,
-`"on"`/`"off"` and the board size text.
+The fields a row answers to:
 
-A row that matched every word is drawn bold: `_is_full(index)` compares the
-row's count against the number of query words and `_match_attr` clears
-`A_DIM` and sets `A_BOLD`, so bold wins over the dim a pasted pad or a disabled
-side would otherwise get.
+| Page | Fields |
+| --- | --- |
+| Pads | `REF.pin`, reference, pin, project, side, function, shape, state, the position text, plus `paste` for a pad that has one and `paste closed` once its opening was removed |
+| Sides | project, side, label, `mirrored`, `on`/`off`, the board size text |
 
-The cursor is preserved by identity, not by index. `restore_index(rows, item,
-fallback)` walks the list looking for the very same object and falls back to a
-clamped index when it is gone. `_start_search` remembers the focused row as
-`search_anchor` before filtering; every keystroke re-filters with
-`_apply_filter(current_row)`, so the cursor follows its row through the
-re-ordering; `_end_search(keep_filter)` puts the cursor back on the row it was
-on — or on the anchor when nothing matched.
+The sub-header becomes `filter: <query>  (<n> of <N>, <k> full)`; the
+`, k full` part is left out for a one-word query, where every match is full
+anyway, and `no match` replaces the whole tail when nothing survived.
 
 ### The filter the search leaves behind
 
-Enter ends the search but keeps its query as the filter of that page, so the
-list stays filtered and ranked (full matches still bold) while the normal keys
-work on the rows that are left. The state is per page, like `cursor` and `top`:
+Enter leaves the search but **keeps** the filter: the list stays filtered and
+ranked and every key works on the rows that are left. Esc leaves and clears it
+at once, and clears a filter later on the way vim's `:noh` drops a highlight.
+Either way the cursor stays on the row it was on — `restore_index` looks the
+anchor row up by identity in the new list and falls back to a clamped index
+when it is gone.
 
-| attribute | what it holds |
-| --- | --- |
-| `search` | the query being typed, or `None` when the search is closed |
-| `filters[page]` | the query Enter left on that page, or `None` |
-| `_filtered[page]` / `_counts[page]` | the rows that query keeps and their match counts |
-| `query` (property) | `search` while searching, else `filters[page]` — what the sub-header, the ranking and `_is_full` read |
-| `filtered` / `match_counts` (properties) | the two lists of the *current* page |
-
-`_filter_page(page, keep, move=...)` recomputes one page's filtered rows,
-`_apply_filter` is the current page's shorthand, and `_rows_list()` returns
-`_filtered[page]` when there is one. The filter is re-applied when its *base*
-list changes — `_sync_visible` does it for the Pads page after a side toggle or
-`*`, and `_goto` does it on the way into a page — but never after a mere state
-change: pressing `o` on a pad the filter matched by its state leaves the row
-where it is, so a filtered list can be worked through from top to bottom.
-
-A blank query is never kept (it filters nothing); a query that matched nothing
-is, and then Esc — `_clear_filter` — puts the cursor back on `search_anchor`,
-the row the search started from. Otherwise Esc keeps the cursor on the focused
-row, like vim's `:noh`.
-
-`search_char(key)` accepts only printable ASCII (32 to 126), so control keys and
-everything curses reports as a `KEY_*` code (>= 256) never end up in the query.
+Each page keeps its own filter (`filters: [Option<String>; 4]`), and `/`
+always starts a fresh, empty search, so typing over an active filter replaces
+it rather than narrowing it. `esc clear filter` is inserted into the footer
+help right behind `/ search` while one is active.
 
 ## All-pads mode
 
-`*` flips `show_all`. `visible_pads(pads, sides, show_all)` first keeps the pads
-whose `side_key` belongs to an enabled side — with no sides at all nothing can
-be filtered by side, so every pad passes — and then, unless `show_all`, keeps
-only the candidates.
+`*` switches `show_all`. `visible_pads(projects, pads, sides, show_all)` is
+the base list: every pad of the **enabled** sides (with no sides at all,
+every pad), and without `show_all`, only the candidates.
 
-Pads that already have paste are listed dimmed and marked with `· `. They are
-never `undefined`: `allowed_state` refuses that state for them, `next_state`
-puts them straight to `open` if they somehow are in another state, and
-`cycle_state` then toggles open ↔ ignore. For a candidate the cycle is
-undefined → open → ignore → open …; undefined is only ever a starting point.
-Setting a pasted pad to `ignore` is what closes its opening, and the status line
-says so explicitly ("paste opening closed" / "paste opening kept").
+In all-pads mode the pasted pads are listed dimmed and can be set to `ignore`,
+which removes their paste openings from the stencil. They are never
+`undefined`, and `n` / `N` still walk only the candidates.
 
-`apply_component(pads, pad)` sets the cursor pad's state on every pad of the
-same project, side and reference, skipping the ones that may not take it, and
-returns how many changed. `find_undefined(pads, start, forward)` wraps around
-the list and only stops on candidates, so `n`/`N` walk the pads that still need
-a decision even in the all-pads view.
+## The split view
 
-`_sync_visible(keep)` recomputes the visible list. It caches a signature of
-`(show_all, the keys of the enabled sides)` and does nothing when that has not
-changed, and it returns immediately while a search is active, because the query
-is still being typed. When the list really did change it re-applies the filter
-the Pads page carries to the new base list and then puts the cursor back on
-`keep` (the pad it was on) by identity, so `*` and a side toggle both filter
-what is listed now.
+`v` divides the terminal with a `│` (`SEPARATOR`). The app is drawn into a
+`Buffer` of its own width and blitted onto the left half, so no page's drawing
+code knows about the split.
 
-## Footer wrapping
+`split_plan(width) -> SplitPlan`:
 
-`wrap_items(items, width, max_lines=2)` lays the key help out greedily: items
-are joined with two spaces and never split, as many as fit go on a line, the
-rest start the next one. `wrap_text` does the same for a status message, split
-on whitespace and joined with single spaces. Both call `_wrap`, which clips
-every line with `ellipsis` and, when something had to be dropped, appends `…` to
-the last line so the truncation is visible:
+| Width | `left` | Right half |
+| --- | --- | --- |
+| ≥ `SPLIT_MIN_WIDTH` (150) | `SPLIT_LEFT_WIDTH` (90) | the picture, `width - 91` columns |
+| enough for `SPLIT_LEFT_MIN` (60) + 1 + the prompt | `width - 1 - len(prompt)` | exactly the prompt |
+| anything narrower | 0 | the prompt, full width |
 
-```python
-wrap_items(["a bb", "c dd", "e ff"], 12, 2)      # ['a bb  c dd', 'e ff']
-wrap_items(["aaaa", "bbbb", "cccc", "dddd"], 9, 2)  # ['aaaa', 'bbbb  …']
+The prompt is `SPLIT_PROMPT`, verbatim:
+
+```
+Terminal preview requires a larger terminal, please resize.
 ```
 
-`FOOTER_LINES` is 2, so the help never takes more than two rows. When the
-terminal is too short even for that, `_draw` re-wraps into the number of rows
-that are actually left.
+`panel_rows(height)` gives the picture the full height minus one row for the
+caption, minus one more for the legend when the half is at least
+`LEGEND_MIN_HEIGHT` (5) rows tall.
+
+The picture itself comes from [`ascii.rs`](../src/ascii.rs): a `Raster` of
+square sub-pixels, two stacked per character cell and drawn with `▀`, `▄` and
+`█`, so one millimetre is the same number of screen pixels across and down.
+Classes are painted in the PNG's own order (copper, pads, outline, ignored,
+openings, undefined, selected), so a later class covers an earlier one, and
+`class_color` returns the very same RGB values the PNG uses.
+
+The pad it draws is the one the **Pads page** cursor is on, whatever page is
+in front (`panel_pad`). The zoom (`zoom_step`) gives the pad's larger dimension
+`ZOOM_SPAN` (0.25) of the panel width, clamped to at least `MIN_SPAN_COLS` (3)
+columns and at most the whole panel, and the window is centred on the pad. The
+caption above it reads
+
+```
+U3.14 · indxworks bottom · window 24.00 x 22.00 mm · 1 col = 0.20 mm
+```
+
+When there is nothing to draw the right half says `no pad selected`
+(`NO_PAD`) or `<pad> is not placed on the sheet` — the latter when the pad's
+side is switched off or the layout is empty.
+
+## Caches
+
+Two, because the two expensive things must not run per frame:
+
+| Cache | Keyed by | Invalidated by |
+| --- | --- | --- |
+| `geom_cache: GeomCache` | `SideId` | never — the objects do not change, only their classes do, and those are read from the live `Pad` |
+| `panel_cache` | `(pad, cols, rows, generation)` | `touch()`, which bumps `generation` on every change the right half has to follow |
+
+`invalidate()` = `refresh_layout()` + drop the presets + `touch()`, and every
+mutation calls it. So moving the cursor, changing a pad state, a side switch,
+a sheet size or a layout number all redraw the panel; a repaint after a resize
+that changed nothing else reuses it.
+
+The `GeomCache` entry for a side holds a `Shape` per copper object, per paste
+object and per pad — an `IntervalTreeMultiPolygon` plus its bounds — so
+sampling a sub-pixel is a point-in-polygon lookup rather than a walk over
+every edge. Nothing is ever transformed: the sample point is mapped *back* to
+board coordinates through the area's `Transform`.
 
 ## Inline editing
 
-`e` or Enter on a numeric Layout field calls `_start_edit`: the buffer is
-prefilled with `fmt_mm(current value)` and `edit_fresh` is set, so the first
-character typed replaces the whole prefill while Backspace keeps it and edits it
-instead. `edit_buffer(buffer, key)` accepts digits, `.` and `-` and returns
-`None` for anything else, so stray keys are ignored rather than appended.
+`e` or Enter on a numeric Layout row starts an edit prefilled with the current
+value. The first typed character replaces that prefill (`edit_fresh`), after
+which `edit_buffer` accepts digits, `.` and `-`, and Backspace. Enter parses
+the buffer with `parse_number`, checks it against the field's `Rule` and
+rounds it to 1e-6; an invalid buffer leaves a message and the edit open. Esc
+cancels the edit and nothing else.
 
-Enter parses the buffer with `parse_number` (rejects anything that is not a
-finite float) and checks it with `valid_value` (rejects NaN and the infinities,
-then applies the field rule: `ge0` requires >= 0, `gt0` requires > 0, `any`
-accepts everything); on success the value is rounded to 6 decimals and stored,
-on failure the status line says `invalid value ... for <label>` and the buffer
-stays open. Esc cancels. Space on a numeric field does not edit — it only prints
-"press e or enter to edit".
+`+` / `-` use `step_value`, which adds the field's step, clamps to the field's
+`minimum` and rounds to 1e-6 (and normalises `-0`). A step that would leave
+the valid range is refused with a message instead of being clamped silently.
+On a non-numeric row `+` cycles the choice forward and `-` backward.
 
-`+` / `-` and the left/right arrows use `step_value`, which adds or subtracts
-`field.step`, clamps to `field.minimum` when the field has one, rounds to 6
-decimals and normalises `-0.0` to `0.0`. The result is still checked with
-`valid_value` before it is stored.
+## Generate and the confirmation
 
-## Layout, presets and the generate confirmation
+`w` returns `Action::Generate` straight away when the layout fits. When it
+does not, the first `w` only sets `pending = Some('w')` and puts
+`NOFIT_WARNING` in the status line; a second `w` generates, and any other key
+clears the pending state (the dispatcher takes it at the top of every
+`handle_key`, and Esc reports `generate cancelled`).
 
-`compute_layout` and `on_preview` are callbacks handed in by `cli._run`;
-the TUI never imports the packer or the renderer itself.
-
-- `_refresh_layout()` calls `compute_layout(None)` for the live configuration
-  and catches any exception, setting `self.layout = None` and putting the error
-  in the status line.
-- `_refresh_presets()` packs once per size and orientation — with eight sizes
-  and two orientations that is 16 packs — each on a `config.copy()` so the live
-  configuration is untouched, and stores `True`, `False` or `None` when packing
-  raised.
-- `_invalidate()` is called after anything that can move a cell (toggling a
-  side, picking a size, changing the orientation or a layout parameter): it
-  re-packs the live layout and drops the preset cache, which the loop refills
-  the next time the Stencil page is drawn.
-
-Generating is `w`, on every page, and it is guarded when the block does not fit.
-`_confirm("w", pending)` returns `True` at once when the layout fits or is
-unknown; otherwise it stores the key in `self.pending`, shows `NOFIT_WARNING`
-("layout does not fit the stencil — press w again to generate anyway") and
-returns `None`, so the loop keeps running. A second `w` then generates.
-`pending` is read and cleared at the top of every other key, so any key in
-between cancels the confirmation — Esc says so explicitly ("generate
-cancelled") and does nothing else, which is why it is checked before the
-filter in `escape_action`.
-
-`_preview` sets the status to "rendering…" and redraws *before* calling back,
-because a full render takes about a second (see [render.md](render.md)), then
-reports the path or the error.
-
-## Terminal requirements
-
-The module imports the standard library `curses` at module level, which is why
-there is no Windows support without a curses port. Colours are optional:
-`_init_colors` returns quietly when the terminal has none and `_state_attr` /
-`_kind_attr` fall back to `A_DIM`, `A_BOLD` and `A_REVERSE`. `curses.wrapper`
-restores the terminal on the way out, including after an exception.
-`KEY_RESIZE` calls `update_lines_cols()` and `clear()` to force a full repaint.
-`_put` clips every write to the window and swallows `curses.error` and
-`UnicodeError`, so a narrow, short or otherwise awkward terminal degrades
-instead of crashing the run. The UI uses a handful of non-ASCII glyphs (`→`,
-`●`, `·`, `⌀`, `…`), so a UTF-8 locale is expected.
-
-See [architecture.md](architecture.md) for where the TUI sits in the pipeline
-and what the caller does with its return value.
+`Action` is the whole contract with the event loop: `Continue`, `Generate`,
+`Quit`.

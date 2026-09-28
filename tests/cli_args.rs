@@ -9,7 +9,7 @@ use std::process::{Command, Output};
 
 const BIN: &str = env!("CARGO_BIN_EXE_stencicrity");
 
-/// Every long option `pcbstencil/cli.py` defines, `--overrides` included.
+/// Every long option `cli::Args` defines, `--overrides` included.
 const OPTIONS: [&str; 34] = [
     "--out",
     "--name",

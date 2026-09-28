@@ -1,11 +1,10 @@
 //! Layer classification, source loading and project discovery.
 //!
-//! The classification tests run everywhere; the rest need the sample gerbers
-//! next to the crate (and, for the parity checks, an importable `pcbstencil`)
-//! and skip themselves when they are not there.
+//! The classification tests run everywhere; the rest need the example gerber
+//! sets next to the crate (the `*.zip` files in the crate's parent directory)
+//! and print a note and pass when they are not there.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use stencicrity::project::{
     classify_layer, discover_projects, is_own_output, load_source, DiscoverOptions,
@@ -96,41 +95,6 @@ fn zips() -> Vec<PathBuf> {
     out
 }
 
-fn python() -> Option<PathBuf> {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
-    if !repo.join("pcbstencil/project.py").exists() {
-        return None;
-    }
-    let ok = Command::new("python3")
-        .arg("-c")
-        .arg(format!(
-            "import sys; sys.path.insert(0, {:?}); import pcbstencil.project",
-            repo.display().to_string()
-        ))
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    ok.then(|| repo.to_path_buf())
-}
-
-fn run_python(repo: &Path, script: &str) -> String {
-    let out = Command::new("python3")
-        .arg("-c")
-        .arg(format!(
-            "import sys; sys.path.insert(0, {:?})\n{script}",
-            repo.display().to_string()
-        ))
-        .env("PYTHONIOENCODING", "utf-8")
-        .output()
-        .expect("python3 must run");
-    assert!(
-        out.status.success(),
-        "python failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
 /// `<name>\t<length>\t<classified role>` for every loaded member, sorted.
 fn source_digest(files: &[(String, String)]) -> Vec<String> {
     let mut lines: Vec<String> = files
@@ -147,40 +111,9 @@ fn source_digest(files: &[(String, String)]) -> Vec<String> {
     lines
 }
 
-const PY_SOURCE_DIGEST: &str = r#"
-import os
-from pcbstencil.project import load_source, classify_layer
-files = load_source(os.environ["STENCIL_SOURCE"])
-lines = sorted("%s\t%d\t%s" % (n, len(t), classify_layer(n, t) or "-") for n, t in files.items())
-sys.stdout.write("\n".join(lines))
-"#;
-
 // --------------------------------------------------------------------------- //
 // load_source
 // --------------------------------------------------------------------------- //
-
-#[test]
-fn load_source_of_the_sample_zips_matches_python() {
-    let archives = zips();
-    if archives.is_empty() {
-        eprintln!("skipped: no sample zips next to the crate");
-        return;
-    }
-    let Some(repo) = python() else {
-        eprintln!("skipped: no python3 with pcbstencil importable");
-        return;
-    };
-    for zip in &archives {
-        let ours = source_digest(&load_source(&zip.to_string_lossy()).expect("load_source"));
-        assert!(!ours.is_empty(), "{}: nothing loaded", zip.display());
-        std::env::set_var("STENCIL_SOURCE", zip);
-        let theirs: Vec<String> = run_python(&repo, PY_SOURCE_DIGEST)
-            .split('\n')
-            .map(str::to_string)
-            .collect();
-        assert_eq!(ours, theirs, "{}", zip.display());
-    }
-}
 
 #[test]
 fn load_source_of_a_directory_equals_the_zip() {
@@ -226,7 +159,6 @@ fn load_source_of_extracted_folders() {
         .collect();
     folders.sort();
     assert!(!folders.is_empty(), "{root} holds no directories");
-    let repo = python();
     for folder in folders {
         let files = load_source(&folder.to_string_lossy()).expect("load_source");
         assert!(
@@ -234,14 +166,6 @@ fn load_source_of_extracted_folders() {
             "{}: no classifiable gerber",
             folder.display()
         );
-        if let Some(repo) = repo.as_ref() {
-            std::env::set_var("STENCIL_SOURCE", &folder);
-            let theirs: Vec<String> = run_python(repo, PY_SOURCE_DIGEST)
-                .split('\n')
-                .map(str::to_string)
-                .collect();
-            assert_eq!(source_digest(&files), theirs, "{}", folder.display());
-        }
     }
 }
 
@@ -357,61 +281,6 @@ fn discovers_the_eight_sample_projects() {
     }
 }
 
-const PY_DISCOVER: &str = r#"
-import os
-from pcbstencil.project import discover_projects
-cwd = os.environ["STENCIL_DATA"]
-projects = discover_projects(None, cwd, mirror_bottom=True,
-                             exclude_dirs=[os.path.join(cwd, "stencil-out"),
-                                           os.path.join(cwd, "Stencicrity")],
-                             warn=lambda m: None)
-lines = []
-for p in projects:
-    lines.append("%s\t%s\t%.6f\t%.6f\t%.6f\t%.6f\t%s" % (
-        p.name, os.path.basename(p.source), *p.bbox,
-        ",".join("%s:%d" % (s.name, s.mirror) for s in p.sides())))
-sys.stdout.write("\n".join(lines))
-"#;
-
-#[test]
-fn discovery_matches_python() {
-    if zips().is_empty() {
-        eprintln!("skipped: no sample zips next to the crate");
-        return;
-    }
-    let Some(repo) = python() else {
-        eprintln!("skipped: no python3 with pcbstencil importable");
-        return;
-    };
-    let projects = discover(excluded_outputs());
-    let ours: Vec<String> = projects
-        .iter()
-        .map(|p| {
-            let sides: Vec<String> = p
-                .sides
-                .iter()
-                .map(|s| format!("{}:{}", s.name, u8::from(s.mirror)))
-                .collect();
-            format!(
-                "{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{}",
-                p.name,
-                Path::new(&p.source).file_name().unwrap().to_string_lossy(),
-                p.bbox.0,
-                p.bbox.1,
-                p.bbox.2,
-                p.bbox.3,
-                sides.join(",")
-            )
-        })
-        .collect();
-    std::env::set_var("STENCIL_DATA", data_dir());
-    let theirs: Vec<String> = run_python(&repo, PY_DISCOVER)
-        .split('\n')
-        .map(str::to_string)
-        .collect();
-    assert_eq!(ours, theirs);
-}
-
 #[test]
 fn excluded_directories_are_never_scanned() {
     if zips().is_empty() {
@@ -440,6 +309,26 @@ fn own_output_is_recognised() {
     let text = std::fs::read_to_string(&generated).expect("read");
     let gf = stencicrity::gerber::parse_gerber(&text, "stencil-F_Paste.gbr").expect("parse");
     assert!(is_own_output(&gf));
+}
+
+/// Both the current `%TF.GenerationSoftware` triple and the one the retired
+/// python tool wrote have to be recognised, so an old `stencil-out/` next to
+/// the gerbers is never read back in as an input.
+#[test]
+fn own_output_is_recognised_by_either_name() {
+    let header = |software: &str| {
+        format!("%TF.GenerationSoftware,{software}*%\n%TF.FileFunction,Paste,Top*%\n")
+    };
+    for software in [
+        "Alacrity-Education,stencicrity,0.2.0",
+        "stencicrity,pcbstencil,0.1.5",
+    ] {
+        let text = header(software);
+        let gf = stencicrity::gerber::parse_gerber(&text, "x.gbr").expect("parse");
+        assert!(is_own_output(&gf), "{software}");
+        // the same string is what keeps the file out of discovery
+        assert_eq!(classify_layer("x.gbr", &text), Some("paste_top"));
+    }
     // a KiCad file is not our own output
     let kicad = "%TF.GenerationSoftware,KiCad,Pcbnew,8.0.5*%\n%TF.FileFunction,Copper,L1,Top*%\n";
     let other = stencicrity::gerber::parse_gerber(kicad, "x.gbr").expect("parse");

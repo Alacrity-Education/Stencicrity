@@ -2,15 +2,16 @@
 
 ## Purpose
 
-The python package (`pcbstencil/`, driven by `stencicrity.py`) is being
-retired; the rust crate replaces it. Both produce the same gerbers — the merged
-paste layer, the copper reference and the report are byte for byte identical on
-the example boards, modulo the version string and the creation timestamp in the
-gerber header. This document records where the time and the memory went before
-the python side disappears, so the comparison is not lost with it. The short
-answer: the whole batch run is **4.1x** faster and needs **27% less** peak
-memory; the geometry-heavy stages (pad detection, `object_geometry`) are 14–21x
-faster, and rendering — which dominates a run in both — is 3–4x faster.
+The python package (`pcbstencil/`, driven by `stencicrity.py`) has been
+retired and deleted from the repository; the rust crate replaces it. The two
+produced the same gerbers — the merged paste layer, the copper reference and
+the report were byte for byte identical on the example boards, modulo the
+version string and the creation timestamp in the gerber header. This document
+was written while both still existed, to record where the time and the memory
+went before the python side disappeared, so the comparison is not lost with it.
+The short answer: the whole batch run is **4.1x** faster and needs **27% less**
+peak memory; the geometry-heavy stages (pad detection, `object_geometry`) are
+14–21x faster, and rendering — which dominates a run in both — is 3–4x faster.
 
 ## Method
 
@@ -186,14 +187,14 @@ the tables above (`aggregate.py`) and the raw results (`raw-python.tsv`,
 `raw-rust.tsv`, `raw-wholerun.tsv`, `raw-startup.tsv`, `raw-memory.tsv`,
 `raw-coldwarm.tsv`, `machine.txt`) live in the scratch directory
 `scratchpad/bench/`. **The python harness stops working the moment the
-`pcbstencil` package is removed** — it imports it directly. The raw TSVs and
-the tables in this document are the record; the python column cannot be
-re-measured afterwards.
+`pcbstencil` package is removed** — it imports it directly, and the package is
+gone. The raw TSVs and the tables in this document are the record; the python
+column cannot be re-measured.
 
 The whole-run figures come from a copy of the example directory per
 implementation:
 
 ```sh
 cd <copy>/ && /usr/bin/time -v stencicrity --batch --no-open
-cd <copy>/ && /usr/bin/time -v python3 stencicrity.py --batch --no-open
+cd <copy>/ && /usr/bin/time -v python3 stencicrity.py --batch --no-open   # historical
 ```

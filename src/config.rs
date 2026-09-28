@@ -696,8 +696,8 @@ pub fn format_config(config: &Config, projects: &[Project]) -> String {
     let sizes: Vec<String> = STENCIL_SIZES.iter().map(|s| size_label(*s)).collect();
 
     let mut lines: Vec<String> = vec![
-        format!("# pcbstencil configuration and pad decisions (generated {stamp})."),
-        "# Edit by hand or through the TUI (python3 stencicrity.py).".to_string(),
+        format!("# stencicrity configuration and pad decisions (generated {stamp})."),
+        "# Edit by hand or through the TUI (run stencicrity in this folder).".to_string(),
         String::new(),
         format!("[{SECTION_STENCIL}]"),
         entry("size", &config.size_label(), &sizes.join(" | ")),

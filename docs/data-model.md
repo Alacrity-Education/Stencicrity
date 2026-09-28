@@ -1,392 +1,264 @@
 # Data model
 
-Everything the program passes around lives in `pcbstencil/model.py`: nine
-dataclasses, a handful of constants and three helper functions. The module
-imports only shapely and `pcbstencil.gerber`, so it is the bottom of the
-dependency graph and safe to import from anywhere.
+Everything the program passes around lives in `src/model.rs`: eight structs,
+one id type, two aliases and the constants. It imports `geo` and
+`crate::gerber`, so it is the bottom of the dependency graph and every other
+module can use it. The module comment is the authoritative description of the
+coordinate systems and of the layout model; this file lists the fields.
 
 ## Coordinate systems
 
-Three of them, in this order:
-
-| Name | Origin | Unit | Used by |
+| Name | Origin | Units | Where |
 | --- | --- | --- | --- |
-| Board coordinates | whatever the KiCad export used (often negative Y) | mm | `GerberFile.objects`, `Pad.x/y`, `Pad.geom`, `Project.bbox` |
-| Sheet coordinates | bottom left corner of the stencil, X right, Y up | mm | `Area`, `Layout`, the divider lines, the dots, the datum (slots, holes, pins), the written gerbers, the report |
-| Image pixels | top left corner of the PNG, X right, Y **down** | px | `render.py` only |
+| board | whatever KiCad used; top and bottom of one project share it | mm | `Pad.x/y`, `Pad.geom`, `Side.board_bbox`, `Project.bbox`, everything `gerber` produces |
+| sheet | bottom-left corner of the stencil, X right, Y up | mm | `Area.x/y/w/h`, `Area.board_rect`, `Layout.dots`, `Layout.dividers`, `Area.slots/holes/pins/marker`, the report, the preview rulers |
+| image | top-left pixel of the PNG, Y down | px | inside `render.rs` only (`Frame::to_px` maps sheet → image and flips Y) |
 
-Board to sheet is one `Transform` per placed side. Sheet to pixels is
-`render._Frame.to_px()`, which is where the Y axis flips:
+`Transform` maps board to sheet:
 
 ```
-to_px(x, y) = (frame.left + x * ppmm,  frame.origin_y - y * ppmm)
+x' = (-x if mirror else x) + dx
+y' =  y                    + dy
 ```
 
-Nothing else flips anything. The top and bottom layers of one project share the
-same board coordinates; a bottom side is mirrored on the *sheet*, not in the
-board coordinates, so the stencil piece matches the board once the board is
-turned over.
+A bottom side is placed mirrored about the Y axis, so that the cut-out piece
+matches the board once the board is flipped over. A mirrored board that
+occupies `[minx, maxx]` in board x occupies `[-maxx, -minx]` after mirroring,
+which is why `pack` computes `dx = bx - if mirror { -maxx } else { minx }`.
+
+## Aliases and small types
+
+| Item | Definition | Notes |
+| --- | --- | --- |
+| `Geom` | `geo::MultiPolygon<f64>` | planar geometry in mm; the one geometry type the whole crate uses |
+| `Bounds` | `(f64, f64, f64, f64)` | `(minx, miny, maxx, maxy)` |
+| `SideId` | `{ project: usize, side: usize }` | an index pair into a `&[Project]`; `Copy`, `Eq`, `Hash`. `get()` / `get_mut()` resolve it, `all_sides()` enumerates every side in order |
+
+`SideId` exists because a `Side` cannot hold a back-reference to its `Project`
+without fighting the borrow checker: the TUI mutates one pad while reading the
+rest, so everything that names a side names it by index. `tui::PadId` is
+`(SideId, usize)` for the same reason.
 
 ## Constants
 
-| Name | Value | Meaning |
+| Constant | Value |
+| --- | --- |
+| `SIDE_TOP`, `SIDE_BOTTOM` | `"top"`, `"bottom"` |
+| `STATES` | `["undefined", "open", "ignore"]` (also `STATE_UNDEFINED` / `STATE_OPEN` / `STATE_IGNORE`) |
+| `STENCIL_SIZES` | `(270,270) (380,280) (420,320) (450,350) (460,460) (520,420) (600,600) (700,600)`, long side first, smallest first |
+| `DEFAULT_STENCIL_SIZE` | `(380, 280)` — a literal, not `STENCIL_SIZES[0]` |
+| `ORIENTATIONS` | `["landscape", "portrait"]` |
+| `SORT_ORDERS` | `["height", "name"]` |
+| `DATUM_MODES` | `["slots", "holes", "none"]` |
+| `DEFAULT_IGNORE_PREFIXES` | `["NT", "TP"]` |
+
+Helpers: `size_label((380,280))` → `"380x280"`; `parse_size("380 X 280")` →
+`Ok((380, 280))` (case insensitive, `×` accepted, long side first, `Err` on
+anything else); `side_key(p, s)` → `"<project>/<side>"`.
+
+## `Transform`
+
+`Copy`, `Default` (identity), `PartialEq`.
+
+| Field | Type | Meaning |
 | --- | --- | --- |
-| `SIDE_TOP`, `SIDE_BOTTOM` | `"top"`, `"bottom"` | `Side.name` and the second field of a side key. |
-| `STATE_UNDEFINED`, `STATE_OPEN`, `STATE_IGNORE` | `"undefined"`, `"open"`, `"ignore"` | The three pad states. |
-| `STATES` | the three above, in that order | Accepted values in the `[pads]` section; `pads.state_counts()` returns one counter per entry. |
-| `STENCIL_SIZES` | `(270,270) (380,280) (420,320) (450,350) (460,460) (520,420) (600,600) (700,600)` | The orderable sheet sizes in mm, long side first, smallest first. The Stencil page of the TUI and the `--size` choices come straight from this tuple. |
-| `DEFAULT_STENCIL_SIZE` | `(380, 280)` | A literal, *not* `STENCIL_SIZES[0]` - the list starts at 270x270 but the default is still 380x280. |
-| `ORIENTATION_LANDSCAPE`, `ORIENTATION_PORTRAIT`, `ORIENTATIONS` | `"landscape"`, `"portrait"` | Landscape puts the long side horizontal. For the square 270x270 both give the same sheet. |
-| `SORT_HEIGHT`, `SORT_NAME`, `SORT_ORDERS` | `"height"`, `"name"` | Cell order handed to the packer. |
-| `DEFAULT_IGNORE_PREFIXES` | `("NT", "TP")` | Reference prefixes whose pads without paste start as `ignore`. |
+| `mirror` | `bool` | negate x before translating |
+| `dx`, `dy` | `f64` | translation, mm |
 
-Helpers: `size_label((380, 280))` gives `"380x280"`; `parse_size("280x380")`
-accepts `x` or `×` in either case and always returns the long side first, so it
-gives `(380, 280)` and raises `ValueError` for anything that is not two
-numbers; `side_key("RBARF", "top")` gives `"RBARF/top"`.
+`apply(x, y) -> (f64, f64)` for a point, `apply_geom(&Geom) -> Geom` for a
+geometry (`geo::MapCoords` over every vertex).
 
-## The classes
+## `Pad`
 
-```mermaid
-classDiagram
-    class Project {
-        +str name
-        +str source
-        +GerberFile outline
-        +Side top
-        +Side bottom
-        +tuple bbox
-        +sides() list~Side~
-        +width float
-        +height float
-    }
-    class Side {
-        +str name
-        +GerberFile copper
-        +GerberFile paste
-        +bool mirror
-        +bool enabled
-        +list~Pad~ pads
-        +key str
-        +candidates list~Pad~
-        +pasted_pads list~Pad~
-        +open_pads list~Pad~
-        +closed_pads list~Pad~
-        +active_paste_objects list
-        +has_openings() bool
-        +is_relevant() bool
-    }
-    class Pad {
-        +str key
-        +str project
-        +str side
-        +str ref
-        +str pin
-        +float x
-        +float y
-        +str function
-        +str shape
-        +Flash flash
-        +BaseGeometry geom
-        +bool has_paste
-        +str state
-        +list~int~ paste_indices
-        +is_candidate bool
-        +is_closed bool
-    }
-    class Config {
-        +tuple size
-        +str orientation
-        +LayoutParams layout
-        +tuple ignore_prefixes
-        +dict sides
-        +dict pads
-        +sheet_size() tuple
-        +copy() Config
-    }
-    class LayoutParams {
-        +float gap
-        +str datum
-        +float hole_dia
-        +float hole_inset
-        +float slot_width
-        +float slot_length
-        +float slot_offset
-        +float slot_pitch
-        +float slot_web
-        +float pin_dia
-        +bool marker
-        +float marker_size
-        +float dot_dia
-        +float dot_pitch
-        +float dot_line_gap
-        +float dot_clearance
-        +float hole_grid
-        +bool outer_border
-        +str sort
-        +pad float
-        +holes bool
-        +slots bool
-        +hole_offset float
-        +slot_inner float
-        +pin_offset float
-        +min_pad_for_slots float
-    }
-    class Layout {
-        +LayoutParams params
-        +list~Area~ areas
-        +float width
-        +float height
-        +tuple block
-        +bool fits
-        +list dots
-        +list dividers
-        +str heuristic
-        +int overflow
-    }
-    class Area {
-        +float x
-        +float y
-        +float w
-        +float h
-        +tuple board_rect
-        +int row
-        +bool overflow
-        +list holes
-        +list slots
-        +list pins
-        +tuple datum_corner
-        +tuple marker
-        +rect tuple
-    }
-    class Transform {
-        +bool mirror
-        +float dx
-        +float dy
-        +apply(x, y) tuple
-        +affine() list
-    }
-    Project "1" --> "0..2" Side
-    Side "1" --> "*" Pad
-    Side "1" --> "1" Project : back reference
-    Config "1" --> "1" LayoutParams
-    Layout "1" --> "*" Area
-    Layout "1" --> "1" LayoutParams
-    Area "1" --> "1" Side
-    Area "1" --> "1" Transform
+One pad flash found on a copper layer. `Clone`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `key` | `String` | `<project>/<side>/<REF>.<pin>@<x>,<y>` with three decimals, board coordinates — the identity in the configuration file |
+| `project`, `side` | `String` | the side it belongs to, by name |
+| `ref_`, `pin` | `String` | from the `%TO.P` object attribute; `?` and a running index when it has none |
+| `x`, `y` | `f64` | flash position, board coordinates, never mirrored |
+| `function` | `String` | first token of `AperFunction` (`"SMDPad"`, …), empty when absent |
+| `shape` | `String` | `Aperture::describe()`, e.g. `"R 0.28x0.52"` |
+| `flash` | `gerber::Flash` | the copper flash itself; the writer re-emits exactly this when the pad is opened |
+| `geom` | `Geom` | the pad's copper shape, board coordinates |
+| `has_paste` | `bool` | the paste layer already opens this pad |
+| `state` | `String` | one of `STATES` |
+| `paste_indices` | `Vec<usize>` | indices into `Side::paste_objects()` of the openings covering it |
+
+| Method | Meaning |
+| --- | --- |
+| `is_candidate()` | `!has_paste` — the user has to decide about it |
+| `is_closed()` | `has_paste && state == "ignore"` — a paste opening the user removed |
+| `label()` | `"<REF>.<pin>"` |
+| `side_key()` | `"<project>/<side>"` |
+
+`has_paste` and `state` are independent: a pad *with* paste is `open` by
+default and can be set to `ignore` (closed); a pad *without* paste starts
+`undefined` (or `ignore` by the prefix rule) and is set to `open` or `ignore`.
+`undefined` never applies to a pasted pad.
+
+## `Side`
+
+One side (top or bottom) of one project — one stencil cell when enabled.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `project_name` | `String` | duplicated from the project, so a `Side` is usable alone |
+| `board_bbox` | `Bounds` | the project's board bounding box, board coordinates |
+| `name` | `String` | `"top"` or `"bottom"` |
+| `copper`, `paste` | `Option<GerberFile>` | the two layers; at least one of them is present |
+| `mirror` | `bool` | place mirrored (set for bottom sides unless `--no-mirror-bottom`) |
+| `enabled` | `bool` | the user switch from the file / the Sides page |
+| `pads` | `Vec<Pad>` | every copper flash that is a pad, those with paste included, ordered ref / pin / x / y |
+
+| Method | Meaning |
+| --- | --- |
+| `key()`, `label()` | `"proj/top"`, `"proj top"` |
+| `board_width()`, `board_height()` | from `board_bbox` |
+| `paste_objects()`, `copper_objects()` | the layers' object slices (empty when the layer is missing) |
+| `candidates()`, `pasted_pads()`, `open_pads()`, `closed_pads()` | filtered iterators over `pads` |
+| `closed_paste_indices()` | `BTreeSet` of the paste objects the closed pads cover |
+| `active_paste_objects()` | the openings that reach the stencil (closed ones removed) |
+| `closed_paste_objects()` | the complement; the preview draws these blue |
+| `has_openings()` | anything at all is cut for this side — decides whether it gets a cell in the final pack |
+| `is_relevant()` | it has paste objects *or* candidate pads — decides whether it is offered at all |
+
+`has_openings()` and `is_relevant()` are deliberately different: a side with
+only candidates is relevant (the user may open one) but has no openings until
+one is opened, and is then dropped from the sheet with a `dropped …: no
+openings at all` line.
+
+## `Project`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `String` | from `%TF.ProjectId`, else the source basename; made unique with ` (2)`, ` (3)` |
+| `source` | `String` | the zip path or directory it came from |
+| `outline` | `Option<GerberFile>` | the `Edge_Cuts` / profile layer, when there is one |
+| `bbox` | `Bounds` | the board bounding box: the outline's when present, else the union of the copper and paste bounds |
+| `sides` | `Vec<Side>` | top then bottom, whichever exist |
+
+`width()`, `height()` come from `bbox`; `side(name)` looks one up.
+
+## `LayoutParams`
+
+Everything on the TUI Layout page, persisted in the `[layout]` section.
+`Clone`, `PartialEq`, `Default` (the values below).
+
+| Field | Config key | Default | Meaning |
+| --- | --- | --- | --- |
+| `gap` | `spacing` | 30.0 | mm between neighbouring boards; the dotted border runs in the middle |
+| `datum` | `datum` | `"slots"` | `slots` \| `holes` \| `none` |
+| `hole_dia` | `hole_dia` | 5.0 | dowel hole diameter (holes datum) |
+| `hole_inset` | `hole_inset` | 2.0 | cell edge to hole edge; may be negative |
+| `slot_width` | `slot_width` | 4.5 | slot size across the cell edge |
+| `slot_length` | `slot_length` | 8.0 | slot size along the cell edge |
+| `slot_offset` | `slot_offset` | 0.5 | cell edge to the slot's outer wall |
+| `slot_pitch` | `slot_pitch` | 20.0 | raster of the modular jig |
+| `slot_web` | `slot_web` | 3.0 | minimum foil between a slot's inner wall and the board |
+| `pin_dia` | `pin_dia` | 3.0 | jig pin diameter for the slots datum |
+| `marker` | `marker` | `true` | cut the orientation X |
+| `marker_size` | `marker_size` | 4.0 | stroke length of the X; its width is `dot_dia` |
+| `dot_dia` | `dot_dia` | 0.5 | divider dot diameter |
+| `dot_pitch` | `dot_pitch` | 3.0 | divider dot spacing |
+| `dot_line_gap` | `dot_line_gap` | 2.5 | each cell's dotted line runs this/2 inside its edge |
+| `dot_clearance` | `dot_clearance` | 0.5 | metal a divider dot must leave to a slot, hole or marker; less and the dot is dropped |
+| `hole_grid` | `hole_grid` | 8.0 | holes datum: hole centres snap to this grid; 0 = off |
+| `outer_border` | `outer_border` | `false` | also dot the cell edges on the block boundary |
+| `sort` | `sort` | `"height"` | `height` \| `name` |
+
+Derived values, so no call site repeats the arithmetic:
+
+| Method | Value | Default |
+| --- | --- | --- |
+| `pad()` | `gap / 2` | 15.0 |
+| `holes()`, `slots()` | `datum == …` | |
+| `hole_offset()` | `hole_inset + hole_dia / 2` — cell edge to hole centre | 4.5 |
+| `slot_inner()` | `slot_offset + slot_width` — cell edge to the wall the pin touches | 5.0 |
+| `pin_offset()` | `slot_inner() - pin_dia / 2` for slots, `hole_offset()` for holes — cell edge to pin centre | 3.5 |
+| `min_pad_for_slots()` | `slot_inner() + slot_web` — the smallest cell padding a slot plus its web fits in | 8.0 |
+
+`pin_offset()` is the single number the packer snaps on: a cell corner sits at
+`k * pitch - pin_offset`, so every pin centre of the sheet lands on the raster
+measured from the sheet origin.
+
+## `Config`
+
+The whole `.stencicrity` file. `Clone`, `PartialEq`, `Default`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `size` | `(u32, u32)` | long side first, one of `STENCIL_SIZES` |
+| `orientation` | `String` | one of `ORIENTATIONS` |
+| `layout` | `LayoutParams` | the `[layout]` section |
+| `ignore_prefixes` | `Vec<String>` | `[rules] ignore_prefixes`, upper case, order preserved |
+| `sides` | `BTreeMap<String, bool>` | side key → enabled |
+| `pads` | `BTreeMap<String, String>` | pad key → state |
+
+`size_label()` renders the size; `sheet_size()` returns `(width, height)` in mm
+honouring the orientation (landscape puts the long side on x). The two maps are
+`BTreeMap`s so a rewritten file is in a stable order, and they keep entries for
+pads and sides the current gerbers no longer explain.
+
+## `Area`
+
+The placement of one side: its cell on the sheet. All sheet coordinates.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `side` | `SideId` | which side this cell holds |
+| `x`, `y` | `f64` | cell bottom-left corner |
+| `w`, `h` | `f64` | cell size |
+| `board_rect` | `Bounds` | where the board bounding box lands inside the cell |
+| `transform` | `Transform` | board → sheet for this side's objects |
+| `row` | `usize` | the packing order; informational only |
+| `overflow` | `bool` | did not fit on the sheet; parked to the right of it |
+| `holes` | `Vec<(f64, f64)>` | dowel hole centres (holes datum), deduplicated across touching cells |
+| `slots` | `Vec<(f64, f64, f64, f64)>` | obround slots `(cx, cy, w, h)`, `w` along x — bottom edge first, then left edge |
+| `pins` | `Vec<(f64, f64)>` | jig pin centres, one per slot (equal to `holes` for the holes datum) |
+| `datum_corner` | `(f64, f64)` | the corner the piece is pushed toward — always the cell's bottom-left |
+| `marker` | `Option<(f64, f64)>` | centre of the orientation X (slots datum with `marker` on) |
+
+`rect()` gives `(x, y, x + w, y + h)`.
+
+## `Layout`
+
+What `pack` returns.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `params` | `LayoutParams` | a clone of `config.layout` as it was when packing ran |
+| `areas` | `Vec<Area>` | one per enabled side, in packing order |
+| `width`, `height` | `f64` | the stencil sheet, mm |
+| `block` | `Bounds` | bounding box of all cells |
+| `fits` | `bool` | nothing overflowed and the block is inside the sheet |
+| `dots` | `Vec<(f64, f64)>` | divider dot centres, deduplicated |
+| `dividers` | `Vec<(f64, f64, f64, f64)>` | the dotted line segments the dots sit on |
+| `heuristic` | `String` | the MaxRects heuristic that won |
+| `overflow` | `usize` | how many cells fit nowhere |
+| `dots_dropped` | `usize` | dots the `dot_clearance` rule removed for coming too close to a slot, hole or marker |
+
+`block_width()` / `block_height()` come from `block`. `dots_dropped` is
+reported by `layout_report`; `layout::dropped_dots(&layout)` recomputes the
+same number from a finished `Layout` when only the layout is at hand.
+
+## How they reference each other
+
+```
+Vec<Project> ── the one owner of everything
+   Project { outline, bbox, sides: Vec<Side> }
+      Side { copper, paste: Option<GerberFile>, pads: Vec<Pad> }
+         Pad { flash: gerber::Flash, geom: Geom }
+
+Config { size, orientation, layout: LayoutParams,
+         sides: BTreeMap<key, bool>, pads: BTreeMap<key, state> }
+
+Layout { params, areas: Vec<Area>, dots, dividers, ... }
+   Area { side: SideId ──> &projects[.project].sides[.side] }
 ```
 
-### `Transform`
-
-The board-to-sheet mapping of one placed side, built by `layout.pack()` and
-used by the writer (`GerberWriter.add_object`) and the renderer.
-
-| Field | Meaning |
-| --- | --- |
-| `mirror` | Mirror about the Y axis: `x -> -x`. Set for bottom sides unless `--no-mirror-bottom`. |
-| `dx`, `dy` | Translation applied *after* the mirror. |
-
-`apply(x, y)` returns `((-x if mirror else x) + dx, y + dy)`. `affine()` returns
-`[a, b, d, e, xoff, yoff]` for `shapely.affinity.affine_transform`, i.e.
-`[-1 or 1, 0, 0, 1, dx, dy]`. There is no rotation and no scaling anywhere in
-the program, so those are the only two forms a transform can take. A mirrored
-board occupies `[-maxx, -minx]` in x, which is why `pack()` computes
-`dx = bx - (-maxx if mirror else minx)`. Mirroring also reverses the direction
-of travel of an arc, which the writer compensates for.
-
-### `Pad`
-
-One pad flash on a copper layer. Created by `pads.detect_pads()`, never by hand.
-
-| Field | Meaning |
-| --- | --- |
-| `key` | `"<project>/<side>/<REF>.<pin>@<x>,<y>"` with the board coordinates at three decimals, e.g. `RBARF/bottom/TP1.1@148.082,-99.568`. This is the identifier in the `[pads]` section, so it is stable as long as the footprint does not move in KiCad. |
-| `project`, `side` | The names, not the objects (a pad has to be comparable without following references). |
-| `ref`, `pin` | From the `%TO.P` object attribute; `?` and a running index when the flash has none. |
-| `x`, `y` | The flash position in board coordinates, unmirrored. |
-| `function` | First token of the aperture's `AperFunction`, e.g. `SMDPad`; may be empty. |
-| `shape` | `Aperture.describe()`, e.g. `C ⌀1.00` or `R 0.70x0.70`. Display and configuration comments only. |
-| `flash` | The `Flash` object itself. `_write_paste()` re-emits exactly this object for a pad the user opened, so an opened pad gets the copper aperture unchanged. |
-| `geom` | The copper shape in board coordinates. Used for the paste overlap test, for `--open-shrink` and for the preview. |
-| `has_paste` | True when the paste layer already opens this pad. Decided once at detection and never changed afterwards. |
-| `state` | See below. |
-| `paste_indices` | Indices into `side.paste_objects` of the openings that sit on this pad. Empty for a candidate. |
-
-Which states are valid depends on `has_paste`:
-
-| | `undefined` | `open` | `ignore` |
-| --- | --- | --- | --- |
-| Candidate (`has_paste == False`) | yes, the default | yes: an opening is cut from `flash` | yes: nothing is cut |
-| Pasted pad (`has_paste == True`) | **never** | yes, the default: its openings stay | yes: its openings are dropped (the pad is *closed*) |
-
-`is_candidate` is `not has_paste`; `is_closed` is `has_paste and state ==
-"ignore"`. Both `config.apply_config()` and `tui.allowed_state()` enforce the
-table above, so an `undefined` on a pasted pad is silently corrected to `open`.
-`label` is `"REF.pin"` and `side_key` is `"project/side"`.
-
-### `Side`
-
-One side of one project, and one stencil cell when it is enabled.
-
-| Field | Meaning |
-| --- | --- |
-| `project` | Back reference to the owning `Project`. |
-| `name` | `"top"` or `"bottom"`. |
-| `copper`, `paste` | The parsed `GerberFile`s, either of which may be `None`. |
-| `mirror` | Placed mirrored on the sheet. Set by `project._build_project()` for bottom sides when `mirror_bottom` is on. |
-| `enabled` | The user switch, from `[sides]` or the Sides page. |
-| `pads` | Every pad flash found on the copper layer, pasted ones included, sorted by reference and pin. |
-
-The derived collections are all recomputed on every access - they are cheap
-list comprehensions over `pads`, not cached state:
-
-| Property | Contents |
-| --- | --- |
-| `paste_objects` / `copper_objects` | The graphic objects of the two layers, or `[]` when the layer is missing. |
-| `candidates` | Pads without paste. The default list on the Pads page. |
-| `pasted_pads` | Pads with paste. Shown only in the all-pads view. |
-| `open_pads` | Candidates the user set to `open`. These get an opening cut from the copper flash. |
-| `closed_pads` | Pads with paste the user set to `ignore`. |
-| `closed_paste_indices()` | The union of `paste_indices` over `closed_pads`. |
-| `active_paste_objects` | `paste_objects` minus the entries in `closed_paste_indices()`. This is what the writer emits and the preview paints red. |
-| `closed_paste_objects` | The complement; the preview paints these blue so the change stays visible. |
-
-Two predicates decide the side's fate:
-
-* `is_relevant()` - `paste_objects` or `candidates` is non-empty. A side has to
-  be relevant to appear in the side table, in the TUI, in `[sides]` and in the
-  first packing.
-* `has_openings()` - `active_paste_objects` or `open_pads` is non-empty. A side
-  has to have openings to survive into the *final* packing; one that does not
-  is dropped with a message. Note the asymmetry: a side with paste openings the
-  user then closed is relevant but has no openings.
-
-### `Project`
-
-| Field | Meaning |
-| --- | --- |
-| `name` | First field of `%TF.ProjectId` from any parsed layer; otherwise the zip or directory basename with a `GERBER-` / `gerber-` / `gerbers-` prefix stripped. Duplicates get `" (2)"`, `" (3)"` appended. |
-| `source` | The zip path or directory it came from. |
-| `outline` | The parsed `Profile` / `Edge_Cuts` layer, or `None`. |
-| `top`, `bottom` | The two `Side`s; either may be `None` when neither copper nor paste exists for it. |
-| `bbox` | `(minx, miny, maxx, maxy)` in board coordinates. |
-
-`bbox` is the outline layer's bounds when there is an outline with drawable
-objects; otherwise the union of the bounds of the copper and paste layers. It
-is the *only* thing the packer knows about a board: `width` and `height` are
-derived from it and a cell is `bbox + gap`. A project with no drawable object
-on any layer is skipped at discovery.
-
-### `LayoutParams`
-
-The `[layout]` section and the Layout page of the TUI, one dataclass.
-
-| Field | Unit | Default | Meaning |
-| --- | --- | --- | --- |
-| `gap` | mm | 30.0 | Spacing between two neighbouring boards. Half of it is the padding around each board. |
-| `datum` | - | `"slots"` | Which alignment features every cell gets: `DATUM_SLOTS`, `DATUM_HOLES` or `DATUM_NONE` (`"slots"` / `"holes"` / `"none"`, the tuple `DATUM_MODES`). |
-| `hole_dia` | mm | 5.0 | Dowel pin hole diameter (`holes` datum). |
-| `hole_inset` | mm | 2.0 | Cell edge to the *edge* of the hole. May be negative, which moves the hole out onto the edge. |
-| `slot_width` | mm | 4.5 | Slot size *across* the cell edge (`slots` datum). |
-| `slot_length` | mm | 8.0 | Slot size *along* the cell edge. |
-| `slot_offset` | mm | 0.5 | Cell edge to the slot's outer wall. The slot may clip the cell's *own* dotted line (which runs `dot_line_gap/2` inside the edge) but never reaches the neighbouring cell; may be 0 but never negative. |
-| `slot_pitch` | mm | 20.0 | Raster of the modular jig: slot centres along the bottom and left edges and the pin centres across them lie on it, and cells grow to whole multiples of it. Must be positive. |
-| `slot_web` | mm | 3.0 | Least foil between a slot's inner wall and the board. A cell grows until it fits. |
-| `pin_dia` | mm | 3.0 | Jig pin diameter for the `slots` datum; the `holes` datum uses `hole_dia` pins. |
-| `marker` | - | True | `slots` datum: cut an X into the foil at the raster point `pin_offset` inside the datum corner, so the orientation of a cut-out piece can be read at a glance. |
-| `marker_size` | mm | 4.0 | Length of each of the X's two strokes; they are cut `dot_dia` wide. Must be positive. |
-| `dot_dia` | mm | 0.5 | Divider dot diameter. Also the minimum distance used to deduplicate dots. |
-| `dot_pitch` | mm | 3.0 | Centre-to-centre spacing of the divider dots. |
-| `dot_line_gap` | mm | 2.5 | How far *inside* its edge a cell's dotted line runs: half of this. Two touching cells therefore show two lines this far apart and the cut goes between them; 0 puts every line on the edge itself, so touching cells share one. |
-| `dot_clearance` | mm | 0.5 | Least metal left between a divider dot and a datum feature. A dot is dropped when `distance(dot centre, feature) < dot_dia/2 + dot_clearance`, i.e. when the neck of foil between the two openings would be thinner than this and could tear. The distance is measured to the slot obround (its centre segment minus `slot_width/2`), to the hole (its centre minus `hole_dia/2`) and to each of the X's two `dot_dia` wide strokes. 0 still drops the dots that overlap a feature; never negative. |
-| `hole_grid` | mm | 8.0 | `holes` datum only: the common grid every dowel hole (and so every jig pin) must land on, measured from the sheet origin. 0 switches it off. The `slots` datum has its own raster, `slot_pitch`. |
-| `outer_border` | - | False | Also dot the cell edges that lie on the outer boundary of the block. |
-| `sort` | - | `"height"` | `height` (tallest board first) or `name`. |
-
-The derived values, all used in `layout.py`:
-
-* `pad` = `gap / 2` - the padding between a board and its cell edge. The cell
-  grows for the slot raster and for the hole grid, so `pad` becomes the
-  *minimum* padding and the report prints `padding ≥ 15.0 mm`.
-* `holes` - **a read-only property**, `datum == "holes"`. It used to be a
-  writable boolean field; everything that set `holes=True/False` now sets
-  `datum` instead (`config.py` still reads a legacy `holes = on | off` line and
-  maps it, see [pads-and-config.md](pads-and-config.md)).
-* `slots` - the same for `datum == "slots"`.
-* `hole_offset` = `hole_inset + hole_dia / 2` - cell edge to the hole *centre*
-  (`holes` datum). With the defaults that is 4.5 mm.
-* `slot_inner` = `slot_offset + slot_width` - cell edge to the slot's inner
-  wall, the wall the pin touches. 5.0 mm by default.
-* `pin_offset` - cell edge to the pin centre of whichever datum is active:
-  `slot_inner - pin_dia / 2` (3.5 mm) for slots, `hole_offset` (4.5 mm) for
-  holes. This is the number the raster arithmetic snaps: a cell corner sits at
-  `k * pitch - pin_offset`.
-* `min_pad_for_slots` = `slot_inner + slot_web` - the smallest cell padding
-  that hosts a slot plus its web to the board. 8.0 mm by default, so the
-  default 15 mm padding is comfortable and the rounding to whole `slot_pitch`
-  steps is what actually sizes the cell.
-
-### `Config`
-
-The whole `.stencicrity` file.
-
-| Field | Meaning |
-| --- | --- |
-| `size` | `(long, short)` in mm, always long side first, and always one of `STENCIL_SIZES` (a file value that is not gets a warning and is dropped). Default `(380, 280)`. |
-| `orientation` | `"landscape"` or `"portrait"`. |
-| `layout` | A `LayoutParams`. |
-| `ignore_prefixes` | The `[rules] ignore_prefixes` tuple, upper case, no duplicates. |
-| `sides` | `{"<project>/<side>": bool}`. |
-| `pads` | `{"<pad key>": state}`. |
-
-`size` stores the sheet, `orientation` decides how it is laid out:
-`sheet_size()` returns `(long, short)` for landscape and `(short, long)` for
-portrait, as floats - that is the `(width, height)` every sheet coordinate is
-measured against. `size_label` is `"380x280"`. `copy()` is a deep-enough copy
-(a `dataclasses.replace` of the layout, new dicts, a new tuple) used by the TUI
-to probe a size or orientation without disturbing the live configuration.
-
-The two dictionaries are the file's memory. They may hold keys that do not
-exist in the current gerbers; see
-[pads-and-config.md](pads-and-config.md) for how those are kept.
-
-### `Area`
-
-The placement of one side, produced by `layout.pack()`.
-
-| Field | Meaning |
-| --- | --- |
-| `side` | The `Side` placed here. |
-| `x`, `y` | Bottom left corner of the *cell* in sheet coordinates. |
-| `w`, `h` | Cell size: board plus gap, grown for the datum (the slot padding, or the hole grid). |
-| `board_rect` | `(minx, miny, maxx, maxy)` where the board bounding box lands on the sheet. The board is centred in the cell. |
-| `transform` | Board to sheet for this side's objects. |
-| `row` | The index in the packing order. Informational only - there are no rows, the cells are packed with MaxRects. |
-| `overflow` | The cell did not fit and was parked to the right of the sheet. |
-| `holes` | The dowel hole centres of this cell in sheet coordinates (`holes` datum). Empty under any other datum *or* when a neighbouring cell already carries the same hole. |
-| `slots` | The obround slots of this cell as `(cx, cy, w, h)` in sheet coordinates, `w` along x and `h` along y (`slots` datum; empty otherwise). One per `slot_pitch` raster position that fits: first the bottom edge left to right (`length x width`), then the left edge bottom to top (`width x length`). An edge of `n` pitches carries `n - 1` of them, and a cell always has at least 2 + 1. |
-| `pins` | The jig pin centres in sheet coordinates, for *either* datum: one per slot, tangent to its inner wall, for `slots`; identical to `holes` for `holes`; empty for `none`. Every one of them lies on the datum's raster (`slot_pitch` or `hole_grid`). |
-| `datum_corner` | The cell corner the cut-out piece is pushed toward - the cell's bottom left, `(x, y)`. For a mirrored side that is the board's physical bottom *right*. |
-| `marker` | Centre of the X orientation marker, `(x + pin_offset, y + pin_offset)` in sheet coordinates - the raster point where the left pin column meets the bottom pin row, the one that never carries a slot. `None` under the `holes` and `none` datums and whenever `marker` is off. |
-
-`rect` is `(x, y, x + w, y + h)`.
-
-### `Layout`
-
-| Field | Meaning |
-| --- | --- |
-| `params` | The `LayoutParams` used (the same object as `config.layout`, not a copy). |
-| `areas` | One `Area` per enabled side, in packing order, overflow cells included. |
-| `width`, `height` | The sheet, from `Config.sheet_size()`. |
-| `block` | Bounding box of all cells, overflow cells included. |
-| `fits` | No overflow *and* the block lies inside the sheet within 1e-6 mm. |
-| `dots` | Divider dot centres in sheet coordinates. Each becomes a flashed circle of `dot_dia` in the paste layer. |
-| `dividers` | The dotted *lines* as `(x0, y0, x1, y1)`, not the cell edges: every cell edge contributes one, running `dot_line_gap / 2` inside it, so the four lines of a cell are its rectangle inset by that much. Collinear lines of different cells are merged. The renderer draws a faint dashed guide under each; the gerber contains only the dots. |
-| `heuristic` | Name of the MaxRects heuristic that won: `bottom-left`, `best short side` or `best area`. |
-| `overflow` | Number of cells that did not fit. |
-| `dots_dropped` | How many dots the `dot_clearance` rule removed (counted before the dots are deduplicated), so `len(dots) + dots_dropped` is at most the raw dot grid. The report's last line prints it. |
-
-`block_width` and `block_height` are derived from `block`. `heuristic` and
-`overflow` are ordinary dataclass fields with defaults; `pack()` sets them after
-constructing the object, and a comment there still claims they are attached
-dynamically - see the rough edges in [development.md](development.md).
+Nothing points backwards: an `Area` names its side with a `SideId`, a `Pad`
+names its side with two `String`s, and the `Config` maps name both with text
+keys. That is what lets the TUI hand `&mut [Project]` to one function and
+`&[Project]` to another in the same frame.

@@ -17,17 +17,29 @@ the gerbers, so a second run over the same boards needs no interaction.
 
 ## Quick start
 
-Put the KiCad gerber zips of all the projects in one folder and run the script
-there:
+Install the release package for your distribution. On Arch:
+
+    curl -fsSL -o /tmp/stencicrity.pkg.tar.zst "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*\.pkg\.tar\.zst' | head -1)" && sudo pacman -U /tmp/stencicrity.pkg.tar.zst
+
+on Debian and Ubuntu:
+
+    curl -fsSL -o /tmp/stencicrity.deb "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*_amd64\.deb' | head -1)" && sudo apt install /tmp/stencicrity.deb
+
+The first `curl` asks the GitHub API for the latest release and picks the
+package URL out of it; the second downloads the file to `/tmp`. Run it again to
+update. Then put the KiCad gerber zips of all the projects in one folder and
+run the tool there:
 
     cd boards/
-    python3 /path/to/stencicrity.py
+    stencicrity
 
 A preview PNG opens in the image viewer and the TUI starts in the terminal.
-Walk through the pads, press Enter, and `stencil-out/stencil.zip` is the order.
-`pip install -e .` in this repository installs a `stencicrity` command so the
-path is not needed; `uv run --with shapely --with pillow --with numpy
-stencicrity.py` works as well.
+Walk through the pads, press `w`, and `stencil-out/stencil.zip` is the order.
+
+From source, with cargo 1.85 or newer:
+
+    cargo install --path .      # a stencicrity on the PATH
+    cargo build --release       # or just ./target/release/stencicrity
 
 ## How a session goes
 
@@ -45,7 +57,8 @@ stencicrity.py` works as well.
 3. Preview. The sheet is laid out and rendered to
    `stencil-out/stencil-preview.png`, which opens in the desktop viewer.
 4. The TUI. Four pages: Pads, Sides, Stencil, Layout. Every change re-packs
-   the sheet; `p` re-renders the preview so the viewer shows the current state.
+   the sheet; `p` re-renders the preview and opens it, `v` shows the sheet
+   right there in the terminal.
 5. Generation. `w` on any page writes the gerbers, the zip, the final preview
    and the report into `stencil-out/`. `q` leaves without generating; the
    configuration is saved anyway.
@@ -57,13 +70,12 @@ half the spacing on each of its four sides, so two neighbouring boards end up
 at least `spacing` (default 30 mm) apart — exactly that unless the cell has to
 grow, which only the alignment features below ever ask for (with the default
 `slots` datum every cell is rounded up to a whole number of 20 mm raster
-steps, so they always do). Cells are not
-rotated. They are placed with a MaxRects bin packer; three heuristics
-(bottom-left, best short side fit, best area fit) are tried and the one that
-places the most cells in the smallest block wins. The block is then
-centred on the sheet. Cells are offered to the packer tallest board first
-(`sort = height`) or alphabetically (`sort = name`); the top side of a board
-always comes right before its bottom.
+steps, so they always do). Cells are not rotated. They are placed with a
+MaxRects bin packer; three heuristics (bottom-left, best short side fit, best
+area fit) are tried and the one that places the most cells in the smallest
+block wins. The block is then centred on the sheet. Cells are offered to the
+packer tallest board first (`sort = height`) or alphabetically (`sort = name`);
+the top side of a board always comes right before its bottom.
 
 The border of every cell is marked with dots: openings of `dot_dia` (0.5 mm)
 every `dot_pitch` (3 mm), evenly spaced along the line. Every cell owns one
@@ -87,10 +99,10 @@ Sheet coordinates start at (0, 0) in the bottom left corner of the stencil, in
 millimetres; the report and the rulers of the preview use them.
 
 Sheet sizes: 270 x 270, 380 x 280 (default), 420 x 320, 450 x 350, 460 x 460,
-520 x 420, 600 x 600 and 700 x 600 mm, each in landscape (long side
-horizontal) or portrait. The Stencil page shows for every size and both orientations whether
-the current block fits. A cell that fits nowhere is parked to the right of the
-sheet, the header says DOES NOT FIT, the preview grows to show it, and
+520 x 420, 600 x 600 and 700 x 600 mm, each in landscape (long side horizontal)
+or portrait. The Stencil page shows for every size and both orientations
+whether the current block fits. A cell that fits nowhere is parked to the right
+of the sheet, the header says DOES NOT FIT, the preview grows to show it, and
 generating asks for a second confirmation. The gerbers are written regardless.
 
 ### Alignment
@@ -117,11 +129,11 @@ A slot's outer wall is `slot_offset` (0.5 mm) inside the cell edge, so it
 **clips the cell's own dotted line** (which runs 1.25 mm inside the edge) but
 never reaches into the neighbouring cell: cells touch, their two dotted lines
 stay `dot_line_gap` (2.5 mm) apart, and the dots that land within
-`dot_clearance` (0.5 mm) of a slot are simply dropped. Pushing the slots that far out frees the foil next to the
-board for the squeegee. The inner wall is `slot_offset + slot_width` (5 mm)
-inside the edge and there is always at least `slot_web` (3 mm) of foil between
-a slot and the board; the cell padding therefore has a floor of 8 mm before the
-rounding to whole pitches.
+`dot_clearance` (0.5 mm) of a slot are simply dropped. Pushing the slots that
+far out frees the foil next to the board for the squeegee. The inner wall is
+`slot_offset + slot_width` (5 mm) inside the edge and there is always at least
+`slot_web` (3 mm) of foil between a slot and the board; the cell padding
+therefore has a floor of 8 mm before the rounding to whole pitches.
 
 The jig is a plate with `pin_dia` (3 mm) pins on the same raster. The piece is
 dropped over them so the pins come up through the slots, then pushed toward its
@@ -143,9 +155,10 @@ of the cell's own dotted line and far from the nearest slot, whose near edge is
 the same way the dots inside a slot are. `--no-marker` leaves it out.
 
 **`holes`.** Four round dowel-pin holes (`hole_dia` 5 mm) inside the cell
-corners, `hole_inset` (2 mm) from the cell edge to the hole edge; a negative inset moves the hole onto the edge, and
-two cells that would share a hole get one. Simple, but over-constrained: four
-pins in four holes only fit with clearance, so the piece can still shift.
+corners, `hole_inset` (2 mm) from the cell edge to the hole edge; a negative
+inset moves the hole onto the edge, and two cells that would share a hole get
+one. Simple, but over-constrained: four pins in four holes only fit with
+clearance, so the piece can still shift.
 
 **The raster.** Both datums put every jig pin centre of the sheet on one
 common raster measured from the sheet origin, so a fixture plate with pins on
@@ -200,6 +213,9 @@ earlier version is loaded once, reported with a `note: migrated ...` line and
 written to `.stencicrity`; the old file stays where it is.
 
 ```ini
+# stencicrity configuration and pad decisions (generated 2026-09-28T05:56:29).
+# Edit by hand or through the TUI (run stencicrity in this folder).
+
 [stencil]
 size = 380x280            # 270x270 | 380x280 | 420x320 | 450x350 | 460x460 | 520x420 | 600x600 | 700x600
 orientation = landscape   # landscape (long side horizontal) | portrait
@@ -239,15 +255,17 @@ RBARF/bottom/TP1.1@148.082,-99.568 = open   # SMDPad C ⌀1.00
 RBARF/top/D1.1@148.775,-96.120 = ignore   # SMDPad R 0.70x0.70
 ```
 
-Pad keys use board coordinates with three decimals, so they stay stable as
-long as the layout in KiCad does not move. Every candidate is listed with its
-state; a pasted pad only appears when it was closed. Sections, keys and values
-are case insensitive, `#` starts a comment, booleans accept `on/off`,
-`yes/no`, `true/false` and `1/0`. A bad value is reported and the default is
-kept; the run never stops because of the file. Entries that no longer match
-the current gerbers are kept at the end of their section under a "not found"
-comment instead of being thrown away. Changing `ignore_prefixes` only affects
-pads the file does not know yet; delete their lines to re-apply the rule.
+The two comment lines at the top are regenerated on every save; everything
+below them is the state. Pad keys use board coordinates with three decimals, so
+they stay stable as long as the layout in KiCad does not move. Every candidate
+is listed with its state; a pasted pad only appears when it was closed.
+Sections, keys and values are case insensitive, `#` starts a comment, booleans
+accept `on/off`, `yes/no`, `true/false` and `1/0`. A bad value is reported and
+the default is kept; the run never stops because of the file. Entries that no
+longer match the current gerbers are kept at the end of their section under a
+"not found" comment instead of being thrown away. Changing `ignore_prefixes`
+only affects pads the file does not know yet; delete their lines to re-apply
+the rule.
 
 ## The TUI
 
@@ -255,12 +273,12 @@ Four pages, switched with `1`-`4`, `Tab` and `Shift-Tab`. The session starts
 on Pads when there is anything to decide, else on Sides. The header always
 shows the sheet size, the block size with FITS or DOES NOT FIT, and the counts
 of `undefined`, `open` and `ignore` candidates plus `closed` openings. The
-footer lists the keys of the current page.
+footer lists the keys of the current page, or the last status message.
 
 | page | what happens there |
 | --- | --- |
 | Pads | the candidates of the enabled sides: state, reference and pin, project, side, aperture function, shape, position; `*` adds the pasted pads (dimmed, marked with a `·`) so they can be closed |
-| Sides | switch board sides on and off; each row shows size, paste count and pads to decide |
+| Sides | switch board sides on and off; each row shows size, paste count, pads to decide and how many are still undefined |
 | Stencil | pick the sheet size; every row shows whether the block fits in landscape and in portrait |
 | Layout | spacing, the datum (`slots`/`holes`/`none`), hole diameter and inset, the six slot numbers (width, length, offset, pitch, web, pin diameter), the orientation marker and its size, dot diameter and pitch, dotted line gap, dot clearance, hole grid, outer border, sort order; the rows of the datum that is not selected are dimmed but stay editable |
 
@@ -277,7 +295,8 @@ footer lists the keys of the current page.
 | `+` / `-` (also `→` / `←`) | Layout: step a number by 0.5 mm (0.1 mm for the dot clearance, 1 mm for the hole grid, 5 mm for the slot pitch), or cycle the datum |
 | `e` | Layout: type a value (typing replaces, Backspace edits, Enter accepts, Esc cancels); on the datum row it cycles |
 | `Enter` | Sides: toggle the side; Stencil: pick the size; Layout: edit the value like `e`; Pads: nothing |
-| `p` / `v` | re-render the preview / re-render and open it |
+| `p` | render the preview PNG and open it in the image viewer |
+| `v` | split view: the sheet around the selected pad, drawn in the terminal |
 | `w` | generate, on every page; when the layout does not fit it asks once more ("press w again") and any other key cancels that |
 | `Esc` | cancel an inline edit, else cancel a pending `w`, else clear an active filter — and nothing at all when there is none of those; Esc never quits |
 | `q` | quit without generating; the configuration is saved |
@@ -286,15 +305,42 @@ footer lists the keys of the current page.
 into the footer and the list filters while you type. A row is kept when any
 word of the query is a substring of any of its fields (reference, pin,
 project, side, function, shape, state, position; pasted pads also answer to
-`paste`). Rows are ranked by how many words they match, rows that match every
-word are shown bold, and the sub-header says how many rows are shown and how
-many are full matches. Enter leaves the search but *keeps* the filter: the
-list stays filtered and ranked, and every key above works on the rows that are
-left — toggling a side or `*` re-applies the filter to the list that results.
-Esc leaves the search and clears the filter at once, and clears a kept filter
-later on, the way vim's `:noh` drops a highlight; either way the cursor stays
-on the row it was on. `/` always starts a new, empty search, so typing over an
-active filter replaces it, and every page keeps its own filter.
+`paste`, and to `closed` once their opening was removed). Rows are ranked by
+how many words they match, rows that match every word are shown bold, and the
+sub-header says how many rows are shown and how many are full matches. Enter
+leaves the search but *keeps* the filter: the list stays filtered and ranked,
+and every key above works on the rows that are left — toggling a side or `*`
+re-applies the filter to the list that results. Esc leaves the search and
+clears the filter at once, and clears a kept filter later on, the way vim's
+`:noh` drops a highlight; either way the cursor stays on the row it was on. `/`
+always starts a new, empty search, so typing over an active filter replaces it,
+and every page keeps its own filter.
+
+### The split view
+
+`v` divides the terminal with a `│`: the four pages keep the left half, and the
+right half draws the stencil sheet around the pad the **Pads page** cursor is
+on, whatever page is in front. It is the same picture as the PNG, in half
+blocks — two stacked sub-pixels per character cell, so one millimetre is the
+same number of screen pixels across and down — and in the same colours: red for
+everything that becomes an opening, yellow for an undefined candidate, blue for
+an ignored one or a closed opening, cyan for the pad under the cursor, grey for
+copper and the pads on it, light grey for the board outline. A one line legend
+repeats that under the picture when the right half is at least 5 rows tall, and
+a caption above it names the pad, its project and side, the size of the window
+in millimetres and how many millimetres one column is.
+
+The zoom follows the selected pad: its larger dimension spans a quarter of the
+panel, never fewer than 3 character columns and never more than the whole
+width, and the window is centred on it. Moving the cursor, changing a pad, a
+side or a layout number redraws it; nothing else does.
+
+The split wants a 150 column terminal — 90 columns for the app, one for the
+line, the rest for the picture. Below that the right half only carries the
+message `Terminal preview requires a larger terminal, please resize.` and is
+given exactly as many columns as that text needs, as long as the app keeps at
+least 60; narrower still and the message takes the whole width. `v` again turns
+it off.
 
 ## Output files
 
@@ -311,19 +357,25 @@ Everything goes to `--out` (default `./stencil-out`), prefixed with `--name`
 | `stencil-report.txt` | sheet and block size, the winning heuristic, a `Datum:` block naming the mode and its numbers (for `slots`: the raster, the walls, the slot count per edge) and, under `slots`, a `Marker:` block with the raster point the X sits on and how far its cut reaches — `off` when it is switched off, a WARNING when it would cross the cell edge or reach a slot — then a `Grid:` block saying whether every jig pin is on the raster — `slot_pitch` for the slots, `hole_grid` for the holes — and what it cost in cell area, then every cell with its board rectangle, its datum corner, the centre of its orientation X, all its slot or dowel hole coordinates and its jig pin centres (on the sheet and relative to the board corner) plus the direction to push it, pad counts, the dot count with how many dots were dropped for coming closer than `dot_clearance` to a slot, hole or marker, file list |
 
 The gerbers are RS-274X with X2 attributes in the format KiCad writes
-(`FSLAX46Y46`, `MOMM`). The preview shows the whole sheet on a dark background
-with millimetre rulers along the left and bottom edges, a faint dashed guide
-under every dotted line, a label in every cell and a legend underneath:
+(`FSLAX46Y46`, `MOMM`), headed by
+`%TF.GenerationSoftware,Alacrity-Education,stencicrity,<version>*%`. The
+preview shows the whole sheet on a dark background with millimetre rulers along
+the left and bottom edges, a faint dashed guide under every dotted line, a
+label in every cell and a legend underneath:
 
 ![Preview of the example sheet](docs/figures/example-preview.png)
 
-The picture above is the preview of the eight example boards this tool was
-developed with, on a 420 x 320 sheet (the smallest of the presets that holds
-them with the 20 mm slot raster at the default 30 mm spacing; a 20 mm spacing
-fits 380 x 280) with the slots datum: twelve cells grown to 20 mm multiples,
-their dotted borders 2.5 mm apart where cells touch, the 8 mm alignment slots
-along the bottom and left edge of every cell with the jig pins drawn as dashed
-outlines, and the X orientation marker just inside each datum corner.
+The picture above is `stencil-preview.png` from a
+`stencicrity --batch --no-open --size 420x320` run over the eight example
+boards this tool was developed with, at the default 20 px/mm and with the
+stored `.stencicrity` (which switches `LED lamp for gardening` off). 420 x 320
+is the smallest of the presets that holds them with the 20 mm slot raster at
+the default 30 mm spacing; a 20 mm spacing fits 380 x 280. Eleven cells are
+placed — `PhotoAmp bottom` has no openings at all and is dropped — in a 380 x
+220 mm block: cells grown to 20 mm multiples, their dotted borders 2.5 mm apart
+where cells touch, the 8 mm alignment slots along the bottom and left edge of
+every cell with the 63 jig pins drawn as dashed outlines, and the X orientation
+marker just inside each datum corner.
 
 | colour | meaning |
 | --- | --- |
@@ -365,69 +417,41 @@ outlines, and the X orientation marker just inside each datum corner.
   automatically so the image stays below 12000 px).
 - `--outline`, `--no-copper` - which layers go into the zip.
 
-Exit codes: 0 success, 1 aborted in the TUI or interrupted (the configuration
-is still saved), 2 bad input (no projects, unreadable or unsupported gerbers).
+Exit codes: 0 success, 1 aborted in the TUI (the configuration is still saved),
+2 bad input (no projects, unreadable or unsupported gerbers, a rejected option).
 
-## Requirements and installing
+## Requirements
 
-Linux with Python 3.11 or newer, `shapely` 2, `pillow` 10.1 or newer and
-`numpy`. The TUI uses the standard library `curses` module, which Python on
-Linux ships. The preview opens with `xdg-open`; when no viewer can be started
-the PNG is still written.
+A single statically linked binary. Everything it parses, packs, rasterises and
+writes is in the executable, so at run time there is nothing to install but the
+C runtime — on Arch `gcc-libs` and `glibc`, on Debian `libc6` and `libgcc-s1`,
+both pulled in by the package. There is no Python, no shapely, no Pillow and no
+system ncurses: the terminal UI is `ratatui` on `crossterm` and the preview is
+rasterised with `tiny-skia`.
 
-    pip install shapely pillow numpy
-    python3 stencicrity.py            # from the folder with the zips
+`xdg-utils` is optional (a `Recommends` / `optdepends`): it is used to open the
+preview PNG in the desktop image viewer, and when `xdg-open` cannot be started
+the path is printed and the run carries on.
 
-or, for a `stencicrity` command on the PATH:
+Linux only. The configuration file is written through a temporary file with
+Unix permissions and the process umask is read from `/proc/self/status`, so the
+crate does not build for Windows as it stands.
 
-    pip install -e /path/to/Stencicrity
-    cd boards/ && stencicrity
+Building from source needs cargo and rustc 1.85 or newer (`rust-version` in
+`Cargo.toml`); `cargo build --release` produces `target/release/stencicrity`.
+The release packages are built the same way — see
+[`docs/development.md`](docs/development.md).
 
-`uv tool install git+https://github.com/Alacrity-Education/Stencicrity`
-installs the command into its own environment without touching the system
-Python.
+## Performance
 
-### Installing from the release packages
-
-Every release on GitHub carries two packages, both architecture independent:
-
-| file | for |
-| --- | --- |
-| `stencicrity-<version>-1-any.pkg.tar.zst` | Arch Linux and derivatives |
-| `stencicrity_<version>-1_all.deb` | Debian and Ubuntu |
-
-To fetch the latest release and install it in one go, on Arch:
-
-    curl -fsSL -o /tmp/stencicrity.pkg.tar.zst "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*\.pkg\.tar\.zst' | head -1)" && sudo pacman -U /tmp/stencicrity.pkg.tar.zst
-
-on Debian and Ubuntu:
-
-    curl -fsSL -o /tmp/stencicrity.deb "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*_all\.deb' | head -1)" && sudo apt install /tmp/stencicrity.deb
-
-The first `curl` asks the GitHub API for the latest release and picks the
-package URL out of it; the second downloads the file to `/tmp`. Run it again
-to update.
-
-On Arch:
-
-    sudo pacman -U stencicrity-0.1.0-1-any.pkg.tar.zst
-
-pacman pulls `python-shapely`, `python-pillow` and `python-numpy` from the
-repositories.
-
-On Debian and Ubuntu:
-
-    sudo apt install ./stencicrity_0.1.0-1_all.deb
-
-The leading `./` is what makes `apt` treat the argument as a file; it then
-resolves `python3-shapely`, `python3-pil` and `python3-numpy` from the
-archive. `sudo dpkg -i stencicrity_0.1.0-1_all.deb` installs the same file but
-leaves the dependencies to a following `sudo apt --fix-broken install`.
-
-The .deb needs Shapely 2, so it installs on Debian 13 (trixie, ships
-`python3-shapely` 2.1.0) and Ubuntu 24.04 LTS (noble, 2.0.3) or newer. Debian
-12 (bookworm, 1.8.5) and Ubuntu 22.04 (jammy, 1.8.0) are too old and neither
-has the newer Shapely in backports; use `pip` or `uv` there.
+A `--batch --no-open` run over the eight example boards (8 zips, 40 gerber
+layers, 5,472 graphic objects, 685 pads, 11 cells) takes about 0.5 s and peaks
+at 370 MiB of RSS on a desktop machine. Two preview renders are 85 % of that
+time, so `--px-per-mm` is the one knob that changes it noticeably; packing is a
+sixth of a millisecond, which is why the TUI re-packs on every keystroke that
+changes something. [`docs/benchmarks.md`](docs/benchmarks.md) has the
+stage-by-stage timings and memory figures, together with the measurements
+against the retired Python implementation this crate replaced.
 
 ## Notes and limitations
 
@@ -450,14 +474,17 @@ has the newer Shapely in backports; use `pip` or `uv` there.
   other tools may not be recognised.
 - Pads without a `%TO.P` attribute get the reference `?` and a running pin
   number; their keys in the `.stencicrity` file are less stable.
-- No Windows support yet, possibly never. This is due to hard dependency on ncurses. 
+- The final layout is packed a second time, over only the sides that still
+  have openings, so it can differ from the one confirmed in the TUI. The final
+  preview is re-rendered from it, so the PNG on disk and the gerbers always
+  agree.
 
 ## Documentation
 
 [`docs/README.md`](docs/README.md) indexes the developer documentation: the
 architecture and the data model, the gerber reader and writer, the packer, the
-configuration file, the TUI and the preview renderer, plus how to develop,
-package and release the tool.
+configuration file, the TUI and the preview renderer, the benchmarks, plus how
+to develop, package and release the tool.
 
 ## License
 

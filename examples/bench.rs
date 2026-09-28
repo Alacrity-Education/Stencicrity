@@ -8,8 +8,9 @@
 //! ```
 //!
 //! plus `#` lines with the input sizes and the peak RSS of the process. The
-//! python counterpart (`scratchpad/bench/bench_py.py`) prints the same format,
-//! and `aggregate.py` turns both into the tables in the document.
+//! columns of `docs/benchmarks.md` were aggregated from exactly these lines;
+//! the retired python harness it is compared against there printed the same
+//! format and cannot be re-run (see the "Reproducing" section of that file).
 //!
 //! ```sh
 //! cargo run --release --example bench

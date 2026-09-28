@@ -1272,7 +1272,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_parse_like_python() {
+    fn filters_are_parsed_case_insensitively() {
         assert_eq!(
             parse_filter("Board:Bottom"),
             ("board".to_string(), Some("bottom".to_string()))

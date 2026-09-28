@@ -12,6 +12,10 @@ use std::path::Path;
 use crate::gerber::{bake_aperture, BakedAperture, GraphicObject, Segment};
 use crate::model::Transform;
 
+/// The vendor field of the `%TF.GenerationSoftware` triple
+/// (`<vendor>,<application>,<version>`).
+const VENDOR: &str = "Alacrity-Education";
+
 /// File units per mm (4.6 format).
 const SCALE: f64 = 1_000_000.0;
 const LINEAR: u8 = 1; // G01
@@ -369,7 +373,7 @@ impl GerberWriter {
     pub fn render(&self) -> String {
         let mut lines: Vec<String> = vec![
             format!(
-                "%TF.GenerationSoftware,{},pcbstencil,{}*%",
+                "%TF.GenerationSoftware,{VENDOR},{},{}*%",
                 self.software, self.version
             ),
             format!("%TF.CreationDate,{}*%", self.created),
@@ -432,7 +436,7 @@ mod tests {
         assert_eq!(
             lines[0],
             format!(
-                "%TF.GenerationSoftware,stencicrity,pcbstencil,{}*%",
+                "%TF.GenerationSoftware,Alacrity-Education,stencicrity,{}*%",
                 crate::VERSION
             )
         );

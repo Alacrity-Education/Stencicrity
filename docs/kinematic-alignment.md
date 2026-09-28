@@ -293,7 +293,7 @@ datum edge.
 | y-datum slots | two, on the bottom cell edge, centred 8 mm from the bottom-left and bottom-right cell corners | baseline = cell width - 16 mm; corner webs of 2 mm x 2.25 mm survive the cut |
 | x-datum slot | one, on the left cell edge, centred at mid-height | one contact, rotation is already fixed by the y pair |
 | minimum gap for the scheme | 12 mm (2 x (2.25 + 3.75)) | keeps ≥ 3.75 mm of foil between wall and board *(est.)* |
-| dots | omitted where they fall inside a slot | nothing to guide there |
+| dots | dropped where less than `dot_clearance` (0.5 mm) of foil would be left between the dot and a slot, a dowel hole or the orientation X | the neck of metal would tear; `dot_clearance = 0` drops only the dots that actually overlap one |
 | datum corner | bottom-left of every cell in sheet coordinates; a mirrored bottom side therefore has its datum at the board's physical bottom-right | one rule, the report says which corner per side |
 
 The 8 mm grid: the pins only need their *centres* on the raster. With the pin
@@ -382,6 +382,13 @@ stencil side improves by an order of magnitude and stops being the limit.
 
 ## 6. Mapping onto stencicrity's layout code (description only)
 
+*Historical: this section was written before the scheme was implemented and
+before the Rust port, so it names the modules of the then-current python
+package (`pcbstencil/model.py` is now `src/model.rs`, `pcbstencil/layout.py` is
+`src/layout.rs`, and the leading-underscore helpers are plain private `fn`s).
+What was actually built is described in [layout.md](layout.md); the parameter
+names below are the proposal's, not the ones that shipped.*
+
 - `LayoutParams` (`pcbstencil/model.py`): add `datum = off | holes | fence |
   fence-closed` (default `fence`; `holes` keeps today's behaviour for old
   jigs), `datum_slot_width = 4.5`, `datum_slot_length = 12.0`,
@@ -397,7 +404,11 @@ stencil side improves by an order of magnitude and stops being the limit.
   `datum_offset` to the slots only. Slots on a shared edge are merged when they
   overlap (like `_Dedupe` for holes) but two cells' slots on one edge may
   simply coexist. `Area` gets `slots` and `pins` next to `holes`.
-- `_dots()`: drop dots whose centre falls inside a slot rectangle.
+- `dots_of()`: drop a dot when the metal between it and the nearest datum feature would be thinner than `dot_clearance` — i.e. when
+  `distance(dot, feature) < dot_dia / 2 + dot_clearance`. Slots, dowel holes and the
+  two strokes of the orientation X are each held as a capsule (a segment plus a
+  radius) in a hash grid, so the test is O(1) per dot; the count ends up in
+  `Layout.dots_dropped` and in the report.
 - Gerber writer: one obround aperture `O,4.5X12` (rotated for the x slots) or
   a region; the paste layer already carries round flashes, so this is a new
   aperture definition, nothing else. The copper reference layer should also
