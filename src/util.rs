@@ -4,7 +4,7 @@
 /// text runs case-insensitively.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Chunk {
-    Num(u64, String),
+    Num(u64),
     Text(String),
 }
 
@@ -29,7 +29,7 @@ pub fn natural_key(text: &str) -> Vec<Chunk> {
 
 fn flush(cur: &str, digits: bool) -> Chunk {
     if digits {
-        Chunk::Num(cur.parse().unwrap_or(u64::MAX), cur.to_string())
+        Chunk::Num(cur.parse().unwrap_or(u64::MAX))
     } else {
         Chunk::Text(cur.to_lowercase())
     }
