@@ -11,8 +11,8 @@ stencil-out/
 # Packaging output
 *.pkg.tar.zst
 *.deb
-pkg/
-src/
+packaging/arch/pkg/
+packaging/arch/src/
 # ./debian is a build-time copy of packaging/debian (see release.yml)
 debian/
 packaging/debian/.debhelper/
@@ -20,3 +20,6 @@ packaging/debian/files
 packaging/debian/*.substvars
 packaging/debian/stencicrity/
 packaging/debian/debhelper-build-stamp
+
+# Rust
+/target/
