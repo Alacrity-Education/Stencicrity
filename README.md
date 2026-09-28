@@ -15,6 +15,17 @@ Those are collected and shown in a terminal UI where we decide, pad by pad,
 whether they get an opening. The decisions live in a plain text file next to
 the gerbers, so a second run over the same boards needs no interaction.
 
+## Demo
+
+![Recorded demo of the TUI](docs/figures/demo.gif)
+
+The recording (`docs/demo.cast`, play it with `asciinema play docs/demo.cast`)
+runs through a session on the example boards: searching the solder-bridge
+pads with `/jp` and opening them, showing the pads that already have paste
+with `*` and closing one, the split view with the ASCII preview following the
+cursor, switching a side off and on, picking a sheet size that fits, and
+stepping layout values before generating with `w`.
+
 ## Quick start
 
 Install the release package for your distribution. On Arch:
