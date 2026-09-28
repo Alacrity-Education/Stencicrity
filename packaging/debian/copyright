@@ -2,6 +2,29 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Stencicrity
 Upstream-Contact: Alacrity-Education <https://github.com/Alacrity-Education>
 Source: https://github.com/Alacrity-Education/Stencicrity
+Comment: Stencicrity is a Rust program and the binary in this package links
+ the crates listed in Cargo.lock in statically, so the shipped
+ /usr/bin/stencicrity is a combined work that also carries their code. None of
+ them is distributed as source here; the exact set and the exact versions are
+ recorded in Cargo.lock in the source tree, and "cargo metadata" over that tree
+ prints the licence of each one.
+ .
+ Every crate reached this way is under a permissive licence, in practice one of
+ or a choice among: MIT, Apache-2.0 (a handful with the LLVM exception),
+ BSD-2-Clause, BSD-3-Clause, ISC, Zlib, 0BSD, the Unlicense, BSL-1.0, MPL-2.0,
+ WTFPL and the Unicode licences (Unicode-3.0 and Unicode-DFS-2016) for the
+ character tables. The overwhelming majority are dual-licensed "MIT OR
+ Apache-2.0", the usual Rust ecosystem terms. The only crates that mention a
+ copyleft licence at all are r-efi, which offers LGPL-2.1-or-later as one arm
+ of a three-way choice and is a UEFI target crate that is not compiled into a
+ Linux build, and termina, which offers MPL-2.0 as one arm of a choice; the
+ MIT arm is the one taken for both. None of these is incompatible with the
+ AGPL-3.0-or-later of Stencicrity itself, which is the licence the combined
+ binary is distributed under.
+ .
+ The bundled font, assets/DejaVuSans.ttf, is not a crate: it is the DejaVu
+ font, under the Bitstream Vera and Arev fonts licences, and its terms are in
+ assets/DejaVuSans-LICENSE.txt in the source tree.
 
 Files: *
 Copyright: 2025-2026 Alacrity-Education

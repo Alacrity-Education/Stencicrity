@@ -1,29 +1,57 @@
 # Maintainer: lucaci32u4 <lucaci32u4@gmail.com>
 
 pkgname=stencicrity
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Merge KiCad paste/copper gerbers of several projects into one stencil order"
-arch=(any)
+arch=(x86_64)
 url="https://github.com/Alacrity-Education/Stencicrity"
 license=(AGPL-3.0-or-later)
-depends=(python python-shapely python-pillow python-numpy)
-makedepends=(python-build python-installer python-wheel python-setuptools)
+# A Rust binary links its crates in statically; what is left at run time is the
+# C runtime and libgcc_s (panic unwinding), as "ldd target/release/stencicrity"
+# over a release build shows.
+depends=(gcc-libs glibc)
+makedepends=(cargo git)
 optdepends=('xdg-utils: open the preview PNG in the desktop image viewer')
+# The release profile in Cargo.toml already strips the binary, so there are no
+# debug symbols for makepkg to split out. Say so explicitly: the archlinux
+# container image builds with 'debug' in OPTIONS and would otherwise try to
+# produce a second, empty -debug package next to the real one.
+options=(!debug)
 # The tarball is produced next to this PKGBUILD by the release workflow with
 #   git archive --prefix=$pkgname-$pkgver/ -o $pkgname-$pkgver.tar.gz HEAD
 # so it is a local source, not a download; SKIP is fine for a checksum here.
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
 build() {
   cd "$pkgname-$pkgver"
-  python -m build --wheel --no-isolation
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release --all-features
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  # The tests that need the private gerber fixtures skip themselves when the
+  # fixtures are not in the tree, and tests/render_examples.rs is #[ignore].
+  cargo test --frozen --release
 }
 
 package() {
   cd "$pkgname-$pkgver"
-  python -m installer --destdir="$pkgdir" dist/*.whl
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm0755 -t "$pkgdir/usr/bin/" "target/release/$pkgname"
+  install -Dm0644 -t "$pkgdir/usr/share/licenses/$pkgname/" LICENSE
+  install -Dm0644 -t "$pkgdir/usr/share/doc/$pkgname/" README.md
+  # docs/ has a README.md of its own, so the manual goes in a subdirectory
+  # instead of flattening on top of the top-level one. The figures under
+  # docs/figures are several megabytes of PNG and are left out.
+  install -Dm0644 -t "$pkgdir/usr/share/doc/$pkgname/docs/" docs/*.md
 }

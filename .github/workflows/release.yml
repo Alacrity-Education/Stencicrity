@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to build, e.g. 0.1.0 or v0.1.0. Must match pcbstencil.__version__ of the ref you run this on."
+        description: "Version to build, e.g. 0.2.0 or v0.2.0. Must match the package version in Cargo.toml of the ref you run this on."
         required: true
         type: string
 
@@ -42,7 +42,7 @@ jobs:
           else
             RAW="$INPUT_VERSION"
           fi
-          # v0.1.0 and 0.1.0 are both accepted.
+          # v0.2.0 and 0.2.0 are both accepted.
           VERSION="${RAW#v}"
           case "$VERSION" in
             [0-9]*.[0-9]*) : ;;
@@ -51,9 +51,9 @@ jobs:
               exit 1
               ;;
           esac
-          SOURCE="$(python3 -c 'import re, pathlib; print(re.search(r"__version__ = \"([^\"]+)\"", pathlib.Path("pcbstencil/__init__.py").read_text()).group(1))')"
+          SOURCE="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
           if [ "$VERSION" != "$SOURCE" ]; then
-            echo "::error::the release says $VERSION but pcbstencil/__init__.py says $SOURCE. The source is the single source of truth and nothing is rewritten at build time: bump __version__, commit, and tag that commit."
+            echo "::error::the release says $VERSION but Cargo.toml says $SOURCE. The source is the single source of truth and nothing is rewritten at build time: bump the package version, commit, and tag that commit."
             exit 1
           fi
           echo "building $VERSION from tag '$RAW'"
@@ -71,14 +71,12 @@ jobs:
     steps:
       # git has to be there before actions/checkout, and makepkg needs its
       # dependencies installed beforehand: "makepkg -s" would call pacman
-      # through sudo from the unprivileged build user.
+      # through sudo from the unprivileged build user. "rust" brings cargo and
+      # rustc, the PKGBUILD's makedepends.
       - name: Install the toolchain
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed \
-            git sudo github-cli \
-            python python-build python-installer python-wheel python-setuptools \
-            python-shapely python-pillow python-numpy
+          pacman -S --noconfirm --needed git rust sudo github-cli
 
       - uses: actions/checkout@v4
 
@@ -102,8 +100,8 @@ jobs:
         run: |
           set -eu
           cd packaging/arch
-          pacman -Qip stencicrity-"$VERSION"-1-any.pkg.tar.zst
-          pacman -U --noconfirm stencicrity-"$VERSION"-1-any.pkg.tar.zst
+          pacman -Qip stencicrity-"$VERSION"-1-x86_64.pkg.tar.zst
+          pacman -U --noconfirm stencicrity-"$VERSION"-1-x86_64.pkg.tar.zst
           stencicrity --version
           stencicrity --help > /dev/null
 
@@ -139,8 +137,16 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential debhelper dh-python python3-all python3-setuptools \
-            pybuild-plugin-pyproject devscripts git ca-certificates gh
+            build-essential debhelper devscripts git curl ca-certificates gh
+
+      # Trixie's rustc is exactly 1.85, the crate's minimum; build against the
+      # same stable toolchain the developers use instead of living on that
+      # edge. This is why debian/control build-depends on debhelper only and
+      # why the build below passes -d.
+      - name: Install Rust
+        run: |
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v4
 
@@ -162,21 +168,23 @@ jobs:
           fi
           dpkg-parsechangelog
 
+      # -d because cargo comes from rustup and is not a dpkg-installed
+      # build-dependency; see packaging/debian/README.Debian.
       - name: Build the package
-        run: dpkg-buildpackage -us -uc -b
+        run: dpkg-buildpackage -us -uc -b -d
 
       - name: Collect and inspect the package
         run: |
           set -eu
           mkdir -p out
-          mv ../stencicrity_"$VERSION"-1_all.deb out/
-          dpkg-deb -I out/stencicrity_"$VERSION"-1_all.deb
-          dpkg-deb -c out/stencicrity_"$VERSION"-1_all.deb
+          mv ../stencicrity_"$VERSION"-1_*.deb out/
+          dpkg-deb -I out/stencicrity_"$VERSION"-1_*.deb
+          dpkg-deb -c out/stencicrity_"$VERSION"-1_*.deb
 
       - name: Install the package
         run: |
           set -eu
-          apt-get install -y ./out/stencicrity_"$VERSION"-1_all.deb
+          apt-get install -y --no-install-recommends ./out/stencicrity_"$VERSION"-1_*.deb
           stencicrity --version
           stencicrity --help > /dev/null
 

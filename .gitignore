@@ -11,11 +11,16 @@ stencil-out/
 # Packaging output
 *.pkg.tar.zst
 *.deb
+# The source tarball the release workflow drops next to the PKGBUILD with
+# "git archive", plus makepkg's own scratch directories.
+packaging/arch/*.tar.gz
 packaging/arch/pkg/
 packaging/arch/src/
-# ./debian is a build-time copy of packaging/debian (see release.yml)
+# ./debian is a build-time copy of packaging/debian (see release.yml); the
+# cargo registry cache the build points CARGO_HOME at lands in debian/cargo.
 debian/
 packaging/debian/.debhelper/
+packaging/debian/cargo/
 packaging/debian/files
 packaging/debian/*.substvars
 packaging/debian/stencicrity/

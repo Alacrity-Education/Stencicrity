@@ -1,34 +1,46 @@
 Stencicrity for Debian
 ======================
 
-Which releases this package installs on
----------------------------------------
+What is in the package
+----------------------
 
-Stencicrity needs Shapely 2, so the .deb installs on releases that ship
-python3-shapely 2.0 or newer:
+Stencicrity is a Rust program. The .deb carries one binary,
+/usr/bin/stencicrity, with every crate it uses linked in statically. At run
+time it needs nothing but the C runtime, so dh_shlibdeps resolves the whole
+dependency list to libc6 and libgcc-s1 and the package installs on any
+release with a new enough glibc, on any architecture Rust targets.
 
-  * Debian 13 (trixie) and newer - python3-shapely 2.1.0, python3 3.13
-  * Ubuntu 24.04 LTS (noble) and newer - python3-shapely 2.0.3, python3 3.12
-
-It does not install on Debian 12 (bookworm, python3-shapely 1.8.5) or on
-Ubuntu 22.04 LTS (jammy, python3-shapely 1.8.0). Neither bookworm-backports
-nor noble-backports carries a newer Shapely, so on those releases use a
-virtualenv (pip install stencicrity) instead of the package.
-
-The package itself is architecture: all and contains only Python code, so the
-same file works on every architecture of a supported release.
+xdg-utils is a Recommends, not a Depends: it is only used to open the preview
+PNG in the desktop image viewer, and the program prints the path and carries
+on when xdg-open is missing.
 
 Building
 --------
 
 The source is native (debian/source/format is "3.0 (native)"): the Debian
 packaging lives in the upstream git tree and there is no separate upstream
-tarball. Build it from a checkout with
+tarball. dpkg-buildpackage only looks at ./debian, while the packaging is
+kept in packaging/debian next to the Arch PKGBUILD, so stage a copy first:
 
-  dpkg-buildpackage -us -uc -b
+  cp -a packaging/debian debian
+  dpkg-buildpackage -us -uc -b -d
 
-The release workflow in .github/workflows/release.yml does exactly that inside
-a debian:trixie container, after setting the changelog version from the git
-tag with dch.
+Building needs cargo and rustc 1.85 or newer on the PATH. They are not listed
+in Build-Depends, because the toolchain is taken from rustup rather than from
+the archive - trixie's rustc is exactly 1.85 and a build-dependency on it
+would pin the package to one release's compiler. That is what the -d is for:
+it tells dpkg-buildpackage to skip the build-dependency check, which would
+otherwise fail over a cargo that is on the PATH but not dpkg-installed. On a
+machine where cargo does come from the archive, drop the -d.
+
+cargo is pointed at debian/cargo for its registry cache (CARGO_HOME in
+debian/rules), so a build writes nothing outside the source tree. The build
+downloads the crates named in Cargo.lock, so it needs network access; the
+versions are pinned with --locked, so nothing is resolved differently from
+what upstream tested. "debian/rules clean" removes debian/cargo again.
+
+The release workflow in .github/workflows/release.yml does exactly the above
+inside a debian:trixie container: it installs rustup non-interactively, sets
+the changelog version from the git tag with dch, and builds with -d.
 
  -- lucaci32u4 <lucaci32u4@gmail.com>

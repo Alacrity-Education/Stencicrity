@@ -1,8 +1,44 @@
 #!/usr/bin/make -f
 
-# The importable package is pcbstencil; the binary package and the console
-# script are called stencicrity.
-export PYBUILD_NAME=pcbstencil
+# Stencicrity is a Cargo crate. debhelper has no Rust build system of its own
+# here (dh-cargo wants the whole crate dependency tree packaged in the
+# archive), so every auto_* step is driven by plain cargo calls.
+
+# Keep cargo inside the build tree: without this the registry cache, the git
+# checkouts and the credentials file land in $$HOME, which a package build is
+# not allowed to touch. debian/cargo is removed again by the clean target.
+export CARGO_HOME = $(CURDIR)/debian/cargo
 
 %:
-	dh $@ --with python3 --buildsystem=pybuild
+	dh $@
+
+# --locked keeps Cargo.lock authoritative: the build resolves to exactly the
+# versions the crate was tested against and fails instead of silently
+# updating them. The download happens here; the test step below then needs no
+# network of its own.
+override_dh_auto_build:
+	cargo build --release --locked
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	# The tests that need the private gerber fixtures skip themselves when the
+	# fixtures are not in the tree, and tests/render_examples.rs is #[ignore].
+	cargo test --release --locked
+endif
+
+override_dh_auto_install:
+	install -D -m 0755 target/release/stencicrity \
+		debian/stencicrity/usr/bin/stencicrity
+	# docs/ carries a README.md of its own, so the manual goes in a
+	# subdirectory rather than on top of the top-level README installed by
+	# dh_installdocs from debian/docs. docs/figures is several megabytes of
+	# PNG and is left out.
+	install -d debian/stencicrity/usr/share/doc/stencicrity/docs
+	install -m 0644 docs/*.md \
+		debian/stencicrity/usr/share/doc/stencicrity/docs/
+
+override_dh_auto_clean:
+	# Guarded: "debian/rules clean" has to work on a tree that was never
+	# built, and on a machine without a Rust toolchain at all.
+	if command -v cargo >/dev/null 2>&1 && [ -d target ]; then cargo clean; fi
+	rm -rf $(CURDIR)/debian/cargo

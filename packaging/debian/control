@@ -2,22 +2,21 @@ Source: stencicrity
 Section: electronics
 Priority: optional
 Maintainer: lucaci32u4 <lucaci32u4@gmail.com>
-Build-Depends: debhelper-compat (= 13),
-               dh-python,
-               python3-all,
-               python3-setuptools,
-               pybuild-plugin-pyproject
+# Only debhelper is listed. The Rust toolchain is not taken from the archive:
+# trixie ships rustc 1.85 but the crate is built against whatever stable
+# rustup installs in the release container, and an archive-wide build-dep on
+# "cargo" would pin the package to one release's toolchain. Build with
+# "dpkg-buildpackage -d" so dpkg-checkbuilddeps does not object to a cargo
+# that is on PATH but not dpkg-installed; see README.Debian.
+Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
 Homepage: https://github.com/Alacrity-Education/Stencicrity
 
 Package: stencicrity
-Architecture: all
-Depends: ${python3:Depends},
-         ${misc:Depends},
-         python3-shapely (>= 2),
-         python3-pil,
-         python3-numpy
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends}
 Recommends: xdg-utils
 Description: merge KiCad solder-paste gerbers into one stencil order
  Stencicrity takes the gerber exports of several KiCad projects and lays every
@@ -31,7 +30,10 @@ Description: merge KiCad solder-paste gerbers into one stencil order
  copper reference layer, that a stencil house cuts like any other.
  .
  Copper pads that have no paste opening in the source - test points, jumper
- pads, connectors soldered by hand - are collected and presented in a curses
- terminal interface, where each of them is either opened or left closed. The
- decisions are stored in a plain text file next to the gerbers, so a second
- run over the same boards needs no interaction.
+ pads, connectors soldered by hand - are collected and presented in a terminal
+ interface, where each of them is either opened or left closed. The decisions
+ are stored in a plain text file next to the gerbers, so a second run over the
+ same boards needs no interaction.
+ .
+ This package ships a single statically linked Rust binary; apart from the C
+ runtime it pulls nothing in at run time.
