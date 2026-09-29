@@ -28,37 +28,22 @@ interaction.
 
 ## Features
 
-TODO: The features here should instead be user-level, high level overview of the features, like:
-Join a bunch of setencils into one
-Fine-tune which pads will be open or not
-Add paste application jig alignment datum
-Auto-arrange in different sheet sizes
-etc
-As simple to read as possible, to give the user a reason to try this software out. 
-
-- Sheet sizes from 270 x 270 to 700 x 600 mm, landscape or portrait, with a
-  fit check for every size in both orientations.
-- MaxRects placement: three heuristics are tried, the one that places the most
-  cells in the smallest block wins, and the block is centred on the sheet.
-- Dotted borders along every cell edge; where two cells touch, the cut runs
-  between their two lines.
-- The `slots` datum: obround slots on the 20 mm raster of a modular pin jig
-  along the bottom and left edge of every cell, and an X marking the datum
-  corner. The legacy `holes` datum cuts four corner dowel holes instead.
-- Pad decisions with defaults: pads without paste start `undefined`, `NT` and
-  `TP` references start `ignore`, and a pad that already has paste can be
-  closed.
-- Everything a run needs in `./.stencicrity`, a plain text file written on
-  every run and meant to be edited by hand.
-- A TUI with four pages (Pads, Sides, Stencil, Layout), vim-style search, an
-  all-pads view and a split view that draws the sheet in the terminal.
-- A PNG preview of the whole sheet with millimetre rulers, a label in every
-  cell and a legend.
-- Output: RS-274X gerbers in the format KiCad writes, the zip to upload and a
-  report with every slot, hole and pin coordinate.
-- One statically linked binary. A batch run over the eight example boards
-  takes about half a second and a re-pack a sixth of a millisecond, which is
-  why the TUI re-packs on every change ([docs/benchmarks.md](docs/benchmarks.md)).
+- Join the stencils of several boards into one sheet and order it as a single
+  stencil.
+- Decide which pads get an opening: paste openings come over as they are, and
+  every pad without one is listed for you to open or ignore.
+- Cut alignment slots for a pin jig into every piece, on a fixed raster, so
+  each cut-out stencil drops onto the same jig every time.
+- Arrange the boards automatically on the sheet size you pick, with a fit
+  check for every standard size in both orientations.
+- Mark every board's border with dotted lines to cut along, and an X that
+  tells which way round the piece goes.
+- Keep every decision and setting in one small text file next to the gerbers,
+  so the next run over the same boards needs no interaction.
+- See what you get before ordering: a PNG preview with rulers, and a live
+  preview of the selected pad inside the terminal.
+- Fast: a run over the eight example boards takes about half a second
+  ([docs/benchmarks.md](docs/benchmarks.md)).
 
 ## Getting started
 
@@ -73,7 +58,8 @@ On Debian 13 and Ubuntu 24.04 or newer (amd64):
 At run time the binary needs nothing but the C runtime (`gcc-libs`
 and `glibc` on Arch, `libc6` and `libgcc-s1` on Debian), which the package
 pulls in; `xdg-utils` is optional and opens the preview PNG in the desktop
-image viewer.
+image viewer. Linux only: the binary relies on Unix file permissions and
+`/proc`, so it does not build for Windows as it stands.
 
 Or build from source, with cargo and rustc 1.85 or newer:
 
@@ -102,7 +88,32 @@ The preview is drawn on a dark background
 with millimetre rulers along the left and bottom edges, a faint dashed guide
 under every dotted line, a label in every cell and a legend underneath.
 
-TODO: Give an overview of the workflow in stencicrity. Cycle trough unsure pads and decie, select the sheet size, tune parameters (explain what the parameter groups do), explain how search and * work.
+### The workflow
+
+1. **Discover.** Every zip in the folder is a project, and each board side
+   with paste becomes a cell on the sheet.
+2. **Decide the unsure pads.** The Pads page lists every copper pad that has
+   no paste opening. Walk through them (`n` jumps to the next undefined one),
+   press `space` to cycle a pad between open and ignore, or `a` to apply the
+   choice to the whole component. Test points and net ties are ignored by
+   default. Search with `/`: type a few words and the list narrows to the pads
+   whose reference, project, side, shape or state contain them, vim style.
+   `*` shows the pads that already have paste, in case one of them should be
+   closed for this order.
+3. **Pick the sheet.** The Stencil page lists the standard sizes and shows for
+   each one whether the layout fits, landscape or portrait.
+4. **Tune the layout.** The Layout page keeps the numbers in groups: the
+   spacing between boards; the datum, which is either slots on the raster of
+   a pin jig (slot size, offset from the edge, raster pitch, web to the board,
+   pin diameter, the orientation X) or the older corner holes (diameter,
+   inset, grid); the dotted border (dot size and pitch, the gap between the
+   two lines of touching boards, the clearance a dot keeps from a slot); and
+   the packing order. Every change re-packs the sheet, `p` re-renders the PNG
+   and `v` draws the selected pad in the terminal.
+5. **Switch boards on or off** on the Sides page when something should stay
+   out of this order.
+6. **Generate** with `w`. The gerbers, the zip, the report and the final
+   preview land in `stencil-out/`.
 
 ## Pad Handling
 
@@ -118,29 +129,44 @@ The rest are *candidates*, each in one of three states:
 | `open` | an opening is cut with the copper pad's own aperture |
 | `ignore` | deliberately left closed |
 
-TODO: Reword this paragraph simpler: Some pads are auto-detected: TP, NT(net-tie)
-Candidates start `undefined`, except those whose reference is one of the
-`[rules] ignore_prefixes` followed by a digit (`TP3`, `NT12`; not `TPS1`). The
-default list is `NT TP`, so net ties and test points start as `ignore` and do
-not have to be waved through one by one.
+Some pads are decided automatically: references that start with `TP` (test
+points) or `NT` (net ties) begin as `ignore`, so they do not have to be waved
+through one by one. The prefixes are `ignore_prefixes` in the `[rules]`
+section of `.stencicrity`.
+
+The preview PNG and the split view in the TUI use the same colours:
+
+| colour | meaning |
+| --- | --- |
+| red | everything that becomes an opening: paste, opened pads, dots, alignment slots, dowel holes, the orientation X (drawn in the `dot_dia` stroke width it is cut with) |
+| blue dashed outline | a jig pin where it comes up through the foil (through a slot, or through a dowel hole) |
+| orange bracket | the datum corner of a cell, with a small green arrow pointing at it: the direction the piece is pushed (slots datum); the red X sits just inside the bracket |
+| yellow | undefined candidates (no opening); a component with undefined pads gets a labelled yellow box |
+| blue | ignored candidates and closed paste openings |
+| grey | copper, and pads that already have paste |
+| light grey | board outlines and the sheet boundary |
+| cyan | the pad under the cursor when the preview is rendered from the TUI |
 
 ## TUI Controls
 
-TODO: Some of these need to go in how to use section. This section will remain only as a reference with the controls. 
-
 Four pages, switched with `1`-`4`, `Tab` and `Shift-Tab`:
- 1. TODO 
- 2.TODO
- 3.TODO
- 4.TODO
 
-TODO Inline table to above list. Outline search features in 1. (Search using `/` - vim style)
-| page | what happens there |
-| --- | --- |
-| Pads | the candidates of the enabled sides: state, reference and pin, project, side, aperture function, shape, position; `*` adds the pasted pads (dimmed, marked with a `·`) so they can be closed |
-| Sides | switch board sides on and off; each row shows size, paste count, pads to decide and how many are still undefined |
-| Stencil | pick the sheet size; every row shows whether the block fits in landscape and in portrait |
-| Layout | spacing, the datum (`slots`/`holes`/`none`), hole diameter and inset, the six slot numbers (width, length, offset, pitch, web, pin diameter), the orientation marker and its size, dot diameter and pitch, dotted line gap, dot clearance, hole grid, outer border, sort order; the rows of the datum that is not selected are dimmed but stay editable |
+1. **Pads**: the candidates of the enabled sides, one row each with state,
+   reference and pin, project, side, aperture function, shape and position.
+   `*` adds the pads that already have paste, dimmed and marked with a `·`,
+   so they can be closed. `/` searches, vim style: type words and the list
+   filters as you type, rows matching every word come first in bold, Enter
+   keeps the filter with the keys below working on it, Esc clears it.
+2. **Sides**: switch board sides on and off; each row shows size, paste
+   count, pads to decide and how many are still undefined. `/` searches here
+   too.
+3. **Stencil**: pick the sheet size; every row shows whether the block fits
+   in landscape and in portrait.
+4. **Layout**: spacing, the datum (`slots`/`holes`/`none`), hole diameter and
+   inset, the six slot numbers (width, length, offset, pitch, web, pin
+   diameter), the orientation marker and its size, dot diameter and pitch,
+   dotted line gap, dot clearance, hole grid, outer border and sort order; the
+   rows of the datum that is not selected are dimmed but stay editable.
 
 | key | action |
 | --- | --- |
@@ -207,26 +233,7 @@ Everything goes to `--out` (default `./stencil-out`), prefixed with `--name`
 
 The gerbers are RS-274X with X2 attributes in the format KiCad writes
 (`FSLAX46Y46`, `MOMM`), headed by
-`%TF.GenerationSoftware,Alacrity-Education,stencicrity,<version>*%`. The
-colours of the preview, and of the split view in the TUI:
-
-TODO: Move the color legend to pad handling
-| colour | meaning |
-| --- | --- |
-| red | everything that becomes an opening: paste, opened pads, dots, alignment slots, dowel holes, the orientation X (drawn in the `dot_dia` stroke width it is cut with) |
-| blue dashed outline | a jig pin where it comes up through the foil (through a slot, or through a dowel hole) |
-| orange bracket | the datum corner of a cell, with a small green arrow pointing at it: the direction the piece is pushed (slots datum); the red X sits just inside the bracket |
-| yellow | undefined candidates (no opening); a component with undefined pads gets a labelled yellow box |
-| blue | ignored candidates and closed paste openings |
-| grey | copper, and pads that already have paste |
-| light grey | board outlines and the sheet boundary |
-| cyan | the pad under the cursor when the preview is rendered from the TUI |
-
-- Linux only. The configuration file is written through a temporary file with
-  Unix permissions and the process umask is read from `/proc/self/status`, so
-  the crate does not build for Windows as it stands.
-
-</details>
+`%TF.GenerationSoftware,Alacrity-Education,stencicrity,<version>*%`.
 
 ## Documentation
 
@@ -253,5 +260,4 @@ builds the Arch and Debian packages and attaches them to the release.
 
 ## License
 
-TODO: Licese should be a relative link, not a code block
-AGPL-3.0. See `LICENSE`.
+AGPL-3.0-or-later. See [LICENSE](LICENSE).
