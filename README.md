@@ -26,13 +26,15 @@ interaction.
 
 ![Recorded demo of the TUI](docs/figures/demo.gif)
 
-The recording is `docs/demo.cast` (`asciinema play docs/demo.cast`). It runs
-through a session on the example boards: searching the solder-bridge pads with
-`/jp` and opening them, `*` for all pads and closing one that has paste, the
-split view following the cursor, switching a side off and on, picking a sheet
-size that fits, and stepping layout values before generating with `w`.
-
 ## Features
+
+TODO: The features here should instead be user-level, high level overview of the features, like:
+Join a bunch of setencils into one
+Fine-tune which pads will be open or not
+Add paste application jig alignment datum
+Auto-arrange in different sheet sizes
+etc
+As simple to read as possible, to give the user a reason to try this software out. 
 
 - Sheet sizes from 270 x 270 to 700 x 600 mm, landscape or portrait, with a
   fit check for every size in both orientations.
@@ -68,9 +70,7 @@ On Debian 13 and Ubuntu 24.04 or newer (amd64):
 
     curl -fsSL -o /tmp/stencicrity.deb "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*_amd64\.deb' | head -1)" && sudo apt install /tmp/stencicrity.deb
 
-The first `curl` asks the GitHub API for the latest release and picks the
-package URL out of it; the second downloads the file to `/tmp`. Run it again
-to update. At run time the binary needs nothing but the C runtime (`gcc-libs`
+At run time the binary needs nothing but the C runtime (`gcc-libs`
 and `glibc` on Arch, `libc6` and `libgcc-s1` on Debian), which the package
 pulls in; `xdg-utils` is optional and opens the preview PNG in the desktop
 image viewer.
@@ -86,239 +86,55 @@ First run:
    it.
 2. Run `stencicrity`.
 3. A preview PNG opens in the image viewer and the TUI starts in the terminal.
-4. Walk through the pads: `space` cycles the state of the pad under the
+4. Fine-tune the openings: `space` cycles the state of the pad under the
    cursor, `n` jumps to the next undefined one, `p` re-renders the preview.
 5. Press `w`.
-6. `stencil-out/stencil.zip` is the order.
+6. `stencil-out/stencil.zip` is the final order.
 
 ## How it works
 
 ![Preview of the example sheet](docs/figures/example-preview.png)
 
 The picture is `stencil-preview.png` from a
-`stencicrity --batch --no-open --size 420x320` run over the eight example
-boards this tool was developed with, at the default 20 px/mm and with the
-stored `.stencicrity` (which switches `LED lamp for gardening` off). 420 x 320
-is the smallest of the presets that holds them with the 20 mm slot raster at
-the default 30 mm spacing; a 20 mm spacing fits 380 x 280. Eleven cells are
-placed (`PhotoAmp bottom` has no openings at all and is dropped) in a 380 x
-220 mm block: cells grown to 20 mm multiples, their dotted borders 2.5 mm apart
-where cells touch, the 8 mm alignment slots along the bottom and left edge of
-every cell with the 63 jig pins drawn as dashed outlines, and the X orientation
-marker just inside each datum corner. The preview is drawn on a dark background
+`stencicrity` run over the eight example
+boards this tool was developed with, at the default 20 px/mm.
+The preview is drawn on a dark background
 with millimetre rulers along the left and bottom edges, a faint dashed guide
 under every dotted line, a label in every cell and a legend underneath.
 
-A run goes discover, decide, pack, write. *Discover*: every `*.zip` in the
-current folder and every subfolder holding gerbers becomes a project (paths
-can also be given explicitly). Layers are recognised by their X2
-`%TF.FileFunction` header, else by KiCad file name patterns (`-F_Paste`,
-`-B_Cu`, `.gtp`, `.gbl`, ...); the project name comes from `%TF.ProjectId`,
-else from the zip or folder name with a `GERBER-` prefix stripped; top and
-bottom each become one *side*; the board size comes from `Edge_Cuts`, else
-from the bounding box of copper and paste. Our own output is never read back
-as input. *Decide*: `./.stencicrity` is read, the command line overrides it,
-the pads are detected and the file is written back straight away, so it exists
-even if the run is interrupted; then the TUI opens (`--batch` skips it).
-*Pack*: the sheet is laid out and rendered to `stencil-out/stencil-preview.png`
-before the TUI opens; every change in the TUI re-packs the sheet, `p`
-re-renders the preview and `v` draws the sheet in the terminal. *Write*: `w`
-writes the gerbers, the zip, the final preview and the report into
-`stencil-out/`; `q` leaves without generating, and the configuration is saved
-either way.
+TODO: Give an overview of the workflow in stencicrity. Cycle trough unsure pads and decie, select the sheet size, tune parameters (explain what the parameter groups do), explain how search and * work.
 
-## Reference
-
-<details>
-<summary>The sheet</summary>
-
-Every enabled side becomes a *cell*: the board's bounding box plus at least
-half the spacing on each side, so two neighbouring boards end up at least
-`spacing` (default 30 mm) apart. A cell only grows beyond that when the
-alignment features ask for it, which the default `slots` datum always does.
-Cells are never rotated. A MaxRects bin packer tries three heuristics
-(bottom-left, best short side fit, best area fit); the one that places the
-most cells in the smallest block wins and the block is centred on the sheet.
-Cells are offered tallest board first (`sort = height`) or alphabetically
-(`sort = name`); the top side of a board always comes right before its bottom.
-Bottom sides are placed mirrored (x to -x) so the piece matches the board once
-it is flipped over; `--no-mirror-bottom` places them as they are. Sheet
-coordinates start at (0, 0) in the bottom left corner, in millimetres; the
-report and the rulers of the preview use them.
-
-**Sheet sizes.** 270 x 270, 380 x 280 (default), 420 x 320, 450 x 350,
-460 x 460, 520 x 420, 600 x 600 and 700 x 600 mm, each in landscape (long side
-horizontal) or portrait. A cell that fits nowhere is parked to the right of
-the sheet, the header says DOES NOT FIT, the preview grows to show it, and
-generating asks for a second confirmation. The gerbers are written regardless.
-
-**Dotted borders.** Every cell owns one dotted line along each of its four
-edges, running `dot_line_gap / 2` (1.25 mm) *inside* the edge and closed at
-the corners, with openings of `dot_dia` (0.5 mm) every `dot_pitch` (3 mm).
-Two cells that touch therefore show two lines `dot_line_gap` (2.5 mm) apart,
-one per cell, and the scissors cut between them; an edge facing free space
-keeps its one line and the cut goes anywhere outside it. No line is drawn
-outside a cell; `dot_line_gap = 0` puts every line on the edge itself, so
-touching cells share one. Collinear pieces are merged into one line, and the
-outer boundary of the block is left blank because nothing has to be cut apart
-there (`outer_border = on` dots it too). A dot that would leave less than
-`dot_clearance` (0.5 mm) of foil between itself and a slot, a dowel hole or
-the orientation X is left out, because that neck of metal would tear.
-
-**The `slots` datum** (default). Obround slots of `slot_width` x `slot_length`
-(4.5 x 8 mm) at every position of the `slot_pitch` (20 mm) raster of a modular
-pin jig, along the cell's **bottom** and **left** edge; the top and right edges
-get none. All the slots that fit are opened, so a jig with pins on that raster
-can use whichever suit it. A cell is sized to a whole number of pitches on
-both axes and its corners sit on the raster, so one raster runs across the
-whole sheet: from a cell corner the raster positions are 3.5, 23.5, 43.5 ...
-mm. A slot needs `slot_offset + slot_length / 2` (4.5 mm) of clearance from
-each end of its edge, so the first position is unusable and an edge of `n`
-pitches carries `n - 1` slots (40 mm one, 60 mm two, 80 mm three); a cell is
-grown until its longer edge has two and its shorter one has one, the 2 + 1 an
-exact location needs. A slot's outer wall is `slot_offset` (0.5 mm) inside the
-cell edge, so it clips the cell's own dotted line but never reaches the
-neighbouring cell, and pushing it that far out frees the foil next to the
-board for the squeegee; the inner wall is `slot_offset + slot_width` (5 mm)
-inside the edge and at least `slot_web` (3 mm) of foil stays between a slot
-and the board, so the cell padding has a floor of 8 mm before the rounding.
-The jig is a plate with `pin_dia` (3 mm) pins on the same raster: the piece is
-dropped over them and pushed toward its bottom-left corner, its *datum
-corner*, until the slot wall nearest the board touches its pin. Two pins on
-one edge fix that axis and the rotation, one on the other edge fixes the
-second axis: three contacts, exactly constrained. A mirrored bottom side has
-its datum corner at the board's physical bottom-right; the report says so per
-cell.
-
-**The orientation X.** `marker` (on by default) cuts an X at the first raster
-point, `pin_offset` (3.5 mm) inside the datum corner, the one raster point of
-the two edges that never carries a slot, so the orientation of a cut-out piece
-can be read at a glance. Two strokes of `marker_size` (4 mm) at ±45°,
-`dot_dia` (0.5 mm) wide, reach 1.66 mm from the centre: 1.84 mm clear of the
-cell edge, 0.59 mm clear of the dotted line and far from the nearest slot,
-whose near edge is 19.5 mm from the corner. `--no-marker` leaves it out.
-
-**The `holes` datum.** Four round dowel-pin holes (`hole_dia` 5 mm) inside
-the cell corners, `hole_inset` (2 mm) from the cell edge to the hole edge; a
-negative inset moves the hole onto the edge, and two cells that would share a
-hole get one. Simple, but over-constrained: four pins in four holes only fit
-with clearance, so the piece can still shift. `datum = none` cuts no
-alignment features at all.
-
-**The raster.** Both datums put every jig pin centre on one common raster
-measured from the sheet origin, so a fixture plate with pins on it takes every
-cut-out piece without adjustment: the packer only puts cell corners where the
-pins land on the raster, and the block is centred by a whole number of
-pitches. `slots` uses `slot_pitch` and cells that are whole multiples of it,
-so neighbouring cells still touch. `holes` uses `hole_grid` (8 mm), for that
-datum only: each cell is grown until its hole-to-hole distance is a multiple
-of it (the board stays centred, so the padding grows past half the spacing)
-and cells no longer have to touch; `hole_grid = 0` switches the grid off. The
-report says whether every pin is on the raster and how much cell area it cost.
-
-</details>
-
-<details>
-<summary>Deciding pads and the <code>.stencicrity</code> file</summary>
+## Pad Handling
 
 Paste openings from the source gerbers are copied to the stencil as they are:
 same aperture, same shape, same position. What needs a decision are the copper
-pads the paste layer does not cover. A pad is a copper flash whose
-`AperFunction` is one of the SMD functions (`SMDPad`, `BGAPad`, `HeatsinkPad`,
-`FiducialPad`, `TestPad`, `ConnectorPad`); through-hole pads (`ComponentPad`,
-`CastellatedPad`) only count with `--include-tht`. A pad is pasted when an
+pads the paste layer does not cover. A pad is pasted when an
 opening contains its centroid or the openings cover at least 10 % of its area.
 The rest are *candidates*, each in one of three states:
 
 | state | meaning |
 | --- | --- |
 | `undefined` | not decided yet; no opening is cut |
-| `open` | an opening is cut with the copper pad's own aperture (`--open-shrink MM` shrinks it inward) |
+| `open` | an opening is cut with the copper pad's own aperture |
 | `ignore` | deliberately left closed |
 
+TODO: Reword this paragraph simpler: Some pads are auto-detected: TP, NT(net-tie)
 Candidates start `undefined`, except those whose reference is one of the
 `[rules] ignore_prefixes` followed by a digit (`TP3`, `NT12`; not `TPS1`). The
 default list is `NT TP`, so net ties and test points start as `ignore` and do
-not have to be waved through one by one. The other direction works too: the
-Pads page lists the pasted pads on `*`, and setting one to `ignore` drops the
-paste openings that cover it from the stencil, for a connector or a shield
-that is soldered by hand on an otherwise finished board.
+not have to be waved through one by one.
 
-Everything a run needs is in `./.stencicrity`, a hidden file in the folder
-with the gerbers. The name is fixed (`--name` does not change it; only
-`--config FILE` points somewhere else). It is written as soon as the projects
-are known and again when the TUI exits, so it always reflects the last run,
-and it is meant to be edited by hand. Options given on the command line
-override the file and are saved back into it. A `stencil.stencil` left over
-from an earlier version is loaded once, reported with a `note: migrated ...`
-line and written to `.stencicrity`; the old file stays where it is.
+## TUI Controls
 
-```ini
-# stencicrity configuration and pad decisions (generated 2026-09-28T05:56:29).
-# Edit by hand or through the TUI (run stencicrity in this folder).
+TODO: Some of these need to go in how to use section. This section will remain only as a reference with the controls. 
 
-[stencil]
-size = 380x280            # 270x270 | 380x280 | 420x320 | 450x350 | 460x460 | 520x420 | 600x600 | 700x600
-orientation = landscape   # landscape (long side horizontal) | portrait
+Four pages, switched with `1`-`4`, `Tab` and `Shift-Tab`:
+ 1. TODO 
+ 2.TODO
+ 3.TODO
+ 4.TODO
 
-[layout]
-spacing = 30.0            # mm between neighbouring boards; the dotted border runs in the middle
-datum = slots             # slots | holes | none - alignment features cut into every cell
-hole_dia = 5.0            # mm (holes datum)
-hole_inset = 2.0          # mm from the dotted line to the hole edge (negative = onto the line)
-slot_width = 4.5          # mm across the cell edge (slots datum)
-slot_length = 8.0         # mm along the cell edge (slots datum)
-slot_offset = 0.5         # mm from the cell edge to the slot's outer wall; may clip the dotted line, never the neighbour
-slot_pitch = 20.0         # mm, raster of the modular jig: slot centres along the bottom and left edges and pin centres lie on it; cells grow to multiples of it
-slot_web = 3.0            # mm of foil kept between a slot and the board; cells grow to hold it
-pin_dia = 3.0             # mm jig pin through a slot (the holes datum uses hole_dia)
-marker = on               # slots datum: cut an X at the raster point inside the datum corner so the piece's orientation can be read
-marker_size = 4.0         # mm, stroke length of the X (stroke width = dot_dia)
-dot_dia = 0.5             # mm
-dot_pitch = 3.0           # mm
-dot_line_gap = 2.5        # each cell's dotted line runs this/2 inside its edge; touching cells show two lines this far apart, cut between them (0 = on the edge)
-dot_clearance = 0.5       # mm, a divider dot is dropped when less metal than this would remain between it and a slot, hole or marker
-hole_grid = 8.0           # holes datum: hole centres snap to this grid, 0 = off
-outer_border = off        # also dot the cell edges on the outer boundary of the block
-sort = height             # height (tallest boards first) | name
-
-[rules]
-ignore_prefixes = NT TP
-
-[sides]
-RBARF/top = on            # 13.4 x 11.6 mm, 50 paste openings, 0 pads to decide
-RBARF/bottom = on         # 13.4 x 11.6 mm, 13 paste openings, 3 pads to decide
-
-[pads]
-# <project>/<side>/<REF>.<pin>@<x>,<y> = undefined | open | ignore
-RBARF/bottom/TP1.1@148.082,-99.568 = open   # SMDPad C ⌀1.00
-# --- pads with paste whose opening is closed (state ignore) ---
-RBARF/top/D1.1@148.775,-96.120 = ignore   # SMDPad R 0.70x0.70
-```
-
-The two comment lines at the top are regenerated on every save; everything
-below them is the state. Pad keys use board coordinates with three decimals,
-so they stay stable as long as the layout in KiCad does not move. Every
-candidate is listed with its state; a pasted pad only appears when it was
-closed. Sections, keys and values are case insensitive, `#` starts a comment,
-booleans accept `on/off`, `yes/no`, `true/false` and `1/0`. A bad value is
-reported and the default kept; the run never stops because of the file.
-Entries that no longer match the current gerbers are kept at the end of their
-section under a "not found" comment instead of being thrown away. Changing
-`ignore_prefixes` only affects pads the file does not know yet; delete their
-lines to re-apply the rule.
-
-</details>
-
-<details>
-<summary>The TUI</summary>
-
-Four pages, switched with `1`-`4`, `Tab` and `Shift-Tab`. The session starts
-on Pads when there is anything to decide, else on Sides. The header shows the
-sheet size, the block size with FITS or DOES NOT FIT, and the counts of
-`undefined`, `open` and `ignore` candidates plus `closed` openings. The footer
-lists the keys of the current page, or the last status message.
-
+TODO Inline table to above list. Outline search features in 1. (Search using `/` - vim style)
 | page | what happens there |
 | --- | --- |
 | Pads | the candidates of the enabled sides: state, reference and pin, project, side, aperture function, shape, position; `*` adds the pasted pads (dimmed, marked with a `·`) so they can be closed |
@@ -375,50 +191,8 @@ app, one for the line, the rest for the picture); below that the right half
 only says `Terminal preview requires a larger terminal, please resize.` `v`
 again turns it off.
 
-</details>
 
-<details>
-<summary>Options worth knowing</summary>
-
-`stencicrity --help` lists everything. The ones we reach for:
-
-- `inputs...`: zip files or gerber directories instead of scanning the folder.
-- `--name NAME`, `--out DIR`: name and place of the generated files;
-  `--config FILE`: the configuration file (default `./.stencicrity`).
-- `--size WxH`, `--landscape` / `--portrait`, `--gap MM`, `--hole-grid MM`,
-  `--dot-dia MM`, `--dot-pitch MM`, `--dot-line-gap MM`, `--dot-clearance MM`,
-  `--outer-border` / `--no-outer-border`, `--sort height|name`; all of them
-  are saved into the `.stencicrity` file.
-- `--datum slots|holes|none`: which alignment features every cell gets, with
-  `--slot-width MM`, `--slot-length MM`, `--slot-offset MM`, `--slot-pitch MM`,
-  `--slot-web MM` and `--pin-dia MM` for the slots and `--hole-dia MM` /
-  `--hole-inset MM` for the holes. `--marker` / `--no-marker` switch the
-  orientation X of the slots datum (on by default) and `--marker-size MM` sets
-  its stroke length. `--holes` and `--no-holes` are the legacy spellings of
-  `--datum holes` and `--datum none`; an old `.stencicrity` with a
-  `holes = on` / `off` line is read the same way.
-- `--only PROJECT[:top|bottom]`, `--exclude PROJECT[:top|bottom]`: switch
-  sides on or off; repeatable, case insensitive, a substring is enough
-  (`--exclude photo` drops `GERBER-PhotoAmp`); saved as well.
-- `--ignore-prefix PREFIX`: replaces the stored `ignore_prefixes` list;
-  repeatable; `--ignore-prefix ""` clears it.
-- `--include-tht`, `--open-shrink MM`, `--no-mirror-bottom`.
-- `--batch`: no TUI; undefined pads stay closed and a warning says how many.
-- `--no-open`, `--px-per-mm N`: preview handling (default 20 px/mm, reduced
-  automatically so the image stays below 12000 px). The two preview renders
-  are most of a run's time, so this is the one knob that changes it
-  noticeably.
-- `--outline`, `--no-copper`: which layers go into the zip.
-
-Exit codes: 0 success, 1 aborted in the TUI (the configuration is still
-saved), 2 bad input (no projects, unreadable or unsupported gerbers, a
-rejected option).
-
-</details>
-
-<details>
-<summary>Output files</summary>
-
+## Output files
 Everything goes to `--out` (default `./stencil-out`), prefixed with `--name`
 (default `stencil`):
 
@@ -436,6 +210,7 @@ The gerbers are RS-274X with X2 attributes in the format KiCad writes
 `%TF.GenerationSoftware,Alacrity-Education,stencicrity,<version>*%`. The
 colours of the preview, and of the split view in the TUI:
 
+TODO: Move the color legend to pad handling
 | colour | meaning |
 | --- | --- |
 | red | everything that becomes an opening: paste, opened pads, dots, alignment slots, dowel holes, the orientation X (drawn in the `dot_dia` stroke width it is cut with) |
@@ -447,34 +222,6 @@ colours of the preview, and of the split view in the TUI:
 | light grey | board outlines and the sheet boundary |
 | cyan | the pad under the cursor when the preview is rendered from the TUI |
 
-</details>
-
-<details>
-<summary>Notes and limitations</summary>
-
-- An `undefined` pad gets no opening. The header counts them, the report and
-  the batch mode warn about the ones left over; check the yellow in the
-  preview before ordering.
-- The stencil house cuts the paste layer only. `F_Cu` is in the zip for our
-  own alignment check; tell them which layer to cut, or drop it with
-  `--no-copper`.
-- Bottom sides are mirrored. Look at the preview with that in mind.
-- Cells are never rotated. A long board that does not fit one way needs the
-  other orientation of the sheet or a larger size.
-- Paste openings are copied as they are; nothing is shrunk or expanded except
-  candidates opened with `--open-shrink`.
-- A side that ends up without a single opening (no paste, nothing opened) is
-  dropped from the sheet and reported.
-- The gerber reader covers what KiCad emits: standard apertures, the common
-  macro primitives, arcs, regions, polarity and X2 attributes. Layer detection
-  relies on X2 `FileFunction` headers or KiCad style file names. Gerbers from
-  other tools may not be recognised.
-- Pads without a `%TO.P` attribute get the reference `?` and a running pin
-  number; their keys in the `.stencicrity` file are less stable.
-- The final layout is packed a second time, over only the sides that still
-  have openings, so it can differ from the one confirmed in the TUI. The final
-  preview is re-rendered from it, so the PNG on disk and the gerbers always
-  agree.
 - Linux only. The configuration file is written through a temporary file with
   Unix permissions and the process umask is read from `/proc/self/status`, so
   the crate does not build for Windows as it stands.
@@ -493,15 +240,18 @@ colours of the preview, and of the split view in the TUI:
   packer, configuration file, TUI, preview renderer, and how to develop,
   package and release ([`docs/development.md`](docs/development.md)).
 
+This project is built **entirely** with AI agents. It serves to automate a time-consuming process that we would have to do manually. Being a low-risk project (we can always do what this does within KiCad), we have taken the liberty to benchmark LLM's capabilities to write helper tools with a given specification and very minimal technical guidance.
+Rust was chosen as a language whose compiler helps verify what the LLM does without many repetitive write-test-debug cycles.  
+
 ## Contributing
 
 Issues and pull requests go to
-[GitHub](https://github.com/Alacrity-Education/Stencicrity). Run `cargo fmt`,
-`cargo clippy --all-targets -- -D warnings` and `cargo test --release` before
-opening a pull request; CI runs the same. Releases are tagged `vX.Y.Z` on a
-commit whose `Cargo.toml` carries that version, and the release workflow
+[GitHub](https://github.com/Alacrity-Education/Stencicrity).
+
+Releases are tagged `vX.Y.Z` on a commit whose `Cargo.toml` carries that version, and the release workflow
 builds the Arch and Debian packages and attaches them to the release.
 
 ## License
 
-AGPL-3.0-or-later. See `LICENSE`.
+TODO: Licese should be a relative link, not a code block
+AGPL-3.0. See `LICENSE`.
