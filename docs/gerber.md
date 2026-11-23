@@ -189,13 +189,13 @@ attributes. Macro bodies are deduplicated separately by their text and named
 ## What a generated file looks like
 
 ```
-%TF.GenerationSoftware,Alacrity-Education,stencicrity,0.2.0*%
+%TF.GenerationSoftware,Alacrity-Education,stencicrity,1.0.0*%
 %TF.CreationDate,2026-09-28T05:56:29+03:00*%
 %TF.FileFunction,Paste,Top*%
 %TF.FilePolarity,Positive*%
 %FSLAX46Y46*%
 G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
-G04 Created by stencicrity 0.2.0*
+G04 Created by stencicrity 1.0.0*
 %MOMM*%
 %LPD*%
 G01*

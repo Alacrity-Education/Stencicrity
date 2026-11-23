@@ -1,7 +1,7 @@
 # Maintainer: lucaci32u4 <lucaci32u4@gmail.com>
 
 pkgname=stencicrity
-pkgver=0.2.0
+pkgver=1.0.0
 pkgrel=1
 pkgdesc="Merge KiCad paste/copper gerbers of several projects into one stencil order"
 arch=(x86_64)

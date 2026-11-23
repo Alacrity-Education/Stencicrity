@@ -181,7 +181,7 @@ user gets an alias; one that no longer exists gets a place on that list.
 The version lives in exactly one place, `Cargo.toml`:
 
 ```toml
-version = "0.2.0"
+version = "1.0.0"
 ```
 
 `--version` prints it (clap reads `CARGO_PKG_VERSION`), `lib::VERSION` is the
