@@ -45,15 +45,19 @@ interaction.
 - Fast: a run over the eight example boards takes about half a second
   ([docs/benchmarks.md](docs/benchmarks.md)).
 
-## Getting started
+## Installing
 
-Install the release package for your distribution. On Arch (x86_64):
+On Arch (x86_64):
 
-    curl -fsSL -o /tmp/stencicrity.pkg.tar.zst "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*\.pkg\.tar\.zst' | head -1)" && sudo pacman -U /tmp/stencicrity.pkg.tar.zst
+```bash
+curl -fsSL -o /tmp/stencicrity.pkg.tar.zst "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*\.pkg\.tar\.zst' | head -1)" && sudo pacman -U /tmp/stencicrity.pkg.tar.zst
+```
 
-On Debian 13 and Ubuntu 24.04 or newer (amd64):
+On Debian 13 / Ubuntu 24.04 or newer (amd64):
 
-    curl -fsSL -o /tmp/stencicrity.deb "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*_amd64\.deb' | head -1)" && sudo apt install /tmp/stencicrity.deb
+```bash
+curl -fsSL -o /tmp/stencicrity.deb "$(curl -fsSL https://api.github.com/repos/Alacrity-Education/Stencicrity/releases/latest | grep -o 'https://[^"]*_amd64\.deb' | head -1)" && sudo apt install /tmp/stencicrity.deb
+```
 
 At run time the binary needs nothing but the C runtime (`gcc-libs`
 and `glibc` on Arch, `libc6` and `libgcc-s1` on Debian), which the package
@@ -61,10 +65,14 @@ pulls in; `xdg-utils` is optional and opens the preview PNG in the desktop
 image viewer. Linux only: the binary relies on Unix file permissions and
 `/proc`, so it does not build for Windows as it stands.
 
-Or build from source, with cargo and rustc 1.85 or newer:
+From source, with cargo and rustc 1.85 or newer:
 
-    cargo build --release       # target/release/stencicrity
-    cargo install --path .      # or a stencicrity on the PATH
+```bash
+cargo build --release       # target/release/stencicrity
+cargo install --path .      # or a stencicrity on the PATH
+```
+
+## Getting started
 
 First run:
 
